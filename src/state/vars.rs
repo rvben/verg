@@ -25,7 +25,19 @@ pub fn interpolate(template: &str, vars: &HashMap<String, toml::Value>) -> Resul
                 .get(var_name)
                 .ok_or_else(|| Error::Parse(format!("undefined variable: {var_name}")))?;
             match value {
-                toml::Value::String(s) => result.push_str(s),
+                toml::Value::String(s) => {
+                    // Resolve $env.VAR_NAME references
+                    if let Some(env_var) = s.strip_prefix("$env.") {
+                        let env_val = std::env::var(env_var).map_err(|_| {
+                            Error::Parse(format!(
+                                "environment variable '{env_var}' not set (referenced by {var_name})"
+                            ))
+                        })?;
+                        result.push_str(&env_val);
+                    } else {
+                        result.push_str(s);
+                    }
+                }
                 toml::Value::Integer(i) => result.push_str(&i.to_string()),
                 toml::Value::Float(f) => result.push_str(&f.to_string()),
                 toml::Value::Boolean(b) => result.push_str(&b.to_string()),
@@ -95,6 +107,36 @@ mod tests {
         let v = HashMap::new();
         let result = interpolate("{{ unclosed", &v);
         assert!(matches!(result, Err(Error::Parse(_))));
+    }
+
+    #[test]
+    fn env_var_resolution() {
+        // SAFETY: test is single-threaded, no other threads reading this var
+        unsafe { std::env::set_var("VERG_TEST_SECRET", "s3cret") };
+        let v = vars(&[(
+            "api_key",
+            toml::Value::String("$env.VERG_TEST_SECRET".into()),
+        )]);
+        assert_eq!(interpolate("key={{ api_key }}", &v).unwrap(), "key=s3cret");
+        unsafe { std::env::remove_var("VERG_TEST_SECRET") };
+    }
+
+    #[test]
+    fn env_var_missing_errors() {
+        let v = vars(&[(
+            "missing",
+            toml::Value::String("$env.VERG_NONEXISTENT_VAR_12345".into()),
+        )]);
+        let result = interpolate("{{ missing }}", &v);
+        assert!(matches!(result, Err(Error::Parse(msg)) if msg.contains("not set")));
+    }
+
+    #[test]
+    fn env_prefix_only_in_string_values() {
+        // A regular string that happens to contain "$env." is not resolved
+        let v = vars(&[("note", toml::Value::String("use $env.FOO".into()))]);
+        // This is NOT a $env reference because it doesn't start with $env.
+        assert_eq!(interpolate("{{ note }}", &v).unwrap(), "use $env.FOO");
     }
 
     #[test]
