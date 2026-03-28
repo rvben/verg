@@ -65,16 +65,22 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         }
     }
 
-    if let Some(owner) = resource.props.get("owner").and_then(|v| v.as_str()) {
-        if target.exists() && !dry_run {
-            let output = run_cmd("chown", &[owner, path])?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(Error::Resource(format!("chown failed: {stderr}")));
+    if let Some(owner) = resource.props.get("owner").and_then(|v| v.as_str())
+        && target.exists()
+    {
+        // Use ls -ld for portable owner detection (works on Linux and macOS)
+        let ls_output = run_cmd("ls", &["-ld", path])?;
+        let ls_line = String::from_utf8_lossy(&ls_output.stdout);
+        let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
+        if current_owner != owner {
+            changes.push(format!("owner {current_owner} → {owner}"));
+            if !dry_run {
+                let output = run_cmd("chown", &[owner, path])?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(Error::Resource(format!("chown failed: {stderr}")));
+                }
             }
-            changes.push(format!("owner → {owner}"));
-        } else if !target.exists() {
-            changes.push(format!("owner → {owner}"));
         }
     }
 

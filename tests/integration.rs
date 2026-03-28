@@ -4,15 +4,16 @@ use tempfile::TempDir;
 #[test]
 fn init_creates_project_structure() {
     let dir = TempDir::new().unwrap();
+    let verg_dir = dir.path().join("verg");
     let output = Command::new(env!("CARGO_BIN_EXE_verg"))
-        .args(["init", "--path", dir.path().to_str().unwrap()])
+        .args(["init", "--path", verg_dir.to_str().unwrap()])
         .output()
         .unwrap();
 
     assert!(output.status.success());
-    assert!(dir.path().join("verg/hosts.toml").exists());
-    assert!(dir.path().join("verg/state/base.toml").exists());
-    assert!(dir.path().join("verg/groups").is_dir());
+    assert!(verg_dir.join("hosts.toml").exists());
+    assert!(verg_dir.join("state/base.toml").exists());
+    assert!(verg_dir.join("groups").is_dir());
 }
 
 #[test]

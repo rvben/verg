@@ -93,8 +93,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
             Ok(0)
         }
         Command::Init => {
-            let init_path = cli.path.unwrap_or_else(|| PathBuf::from("."));
-            commands::init::run(&init_path)?;
+            commands::init::run(&base_dir)?;
             Ok(0)
         }
         Command::Completions { shell } => {

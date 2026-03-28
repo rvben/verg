@@ -13,6 +13,11 @@ pub async fn run(
 ) -> Result<i32, Error> {
     let result = engine.run(base_dir, targets, false).await?;
     print_result(&result, output);
+
+    if let Err(e) = crate::changelog::write_log(base_dir, &result.summaries) {
+        eprintln!("Warning: failed to write change log: {e}");
+    }
+
     Ok(exit_code(&result))
 }
 
