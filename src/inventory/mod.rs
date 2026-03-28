@@ -59,6 +59,75 @@ impl Inventory {
 
         Ok(Inventory { hosts })
     }
+
+    pub fn filter(&self, selector: &selector::Selector) -> Result<Vec<&Host>, Error> {
+        use selector::Selector;
+        match selector {
+            Selector::All => Ok(self.hosts.values().collect()),
+            Selector::Group(name) => {
+                if let Some(host) = self.hosts.get(name) {
+                    return Ok(vec![host]);
+                }
+                let matches: Vec<_> = self
+                    .hosts
+                    .values()
+                    .filter(|h| h.groups.contains(name))
+                    .collect();
+                if matches.is_empty() {
+                    return Err(Error::TargetNotFound(name.clone()));
+                }
+                Ok(matches)
+            }
+            Selector::Host(name) => self
+                .hosts
+                .get(name)
+                .map(|h| vec![h])
+                .ok_or_else(|| Error::TargetNotFound(name.clone())),
+            Selector::Exclude(inner) => {
+                let excluded = self.filter(inner)?;
+                let excluded_names: std::collections::HashSet<_> =
+                    excluded.iter().map(|h| &h.name).collect();
+                Ok(self
+                    .hosts
+                    .values()
+                    .filter(|h| !excluded_names.contains(&h.name))
+                    .collect())
+            }
+            Selector::Union(selectors) => {
+                let mut seen = std::collections::HashSet::new();
+                let mut result = Vec::new();
+                for sel in selectors {
+                    for host in self.filter(sel)? {
+                        if seen.insert(&host.name) {
+                            result.push(host);
+                        }
+                    }
+                }
+                Ok(result)
+            }
+            Selector::Intersection(selectors) => {
+                let sets: Vec<std::collections::HashSet<_>> = selectors
+                    .iter()
+                    .map(|sel| {
+                        self.filter(sel)
+                            .map(|hosts| hosts.iter().map(|h| h.name.clone()).collect())
+                    })
+                    .collect::<Result<_, _>>()?;
+                if sets.is_empty() {
+                    return Ok(vec![]);
+                }
+                let intersection = sets
+                    .into_iter()
+                    .reduce(|a, b| a.intersection(&b).cloned().collect())
+                    .unwrap_or_default();
+                Ok(self
+                    .hosts
+                    .values()
+                    .filter(|h| intersection.contains(&h.name))
+                    .collect())
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +183,90 @@ custom = "from_group"
         let dir = TempDir::new().unwrap();
         let inv = Inventory::load(dir.path()).unwrap();
         assert!(inv.hosts.is_empty());
+    }
+
+    fn build_test_inventory() -> Inventory {
+        let mut hosts = HashMap::new();
+        hosts.insert(
+            "web1".into(),
+            Host {
+                name: "web1".into(),
+                address: "192.168.1.10".into(),
+                user: "root".into(),
+                groups: vec!["web".into(), "prod".into()],
+                vars: HashMap::new(),
+            },
+        );
+        hosts.insert(
+            "web2".into(),
+            Host {
+                name: "web2".into(),
+                address: "192.168.1.11".into(),
+                user: "root".into(),
+                groups: vec!["web".into(), "staging".into()],
+                vars: HashMap::new(),
+            },
+        );
+        hosts.insert(
+            "db1".into(),
+            Host {
+                name: "db1".into(),
+                address: "10.0.0.5".into(),
+                user: "root".into(),
+                groups: vec!["db".into(), "prod".into()],
+                vars: HashMap::new(),
+            },
+        );
+        Inventory { hosts }
+    }
+
+    #[test]
+    fn filter_all() {
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("all").unwrap();
+        let hosts = inv.filter(&sel).unwrap();
+        assert_eq!(hosts.len(), 3);
+    }
+
+    #[test]
+    fn filter_by_group() {
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("web").unwrap();
+        let hosts = inv.filter(&sel).unwrap();
+        assert_eq!(hosts.len(), 2);
+    }
+
+    #[test]
+    fn filter_by_host_name() {
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("db1").unwrap();
+        let hosts = inv.filter(&sel).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "db1");
+    }
+
+    #[test]
+    fn filter_intersection() {
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("prod:web").unwrap();
+        let hosts = inv.filter(&sel).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "web1");
+    }
+
+    #[test]
+    fn filter_exclusion() {
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("prod:!web").unwrap();
+        let hosts = inv.filter(&sel).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "db1");
+    }
+
+    #[test]
+    fn filter_unknown_target_errors() {
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("nonexistent").unwrap();
+        assert!(matches!(inv.filter(&sel), Err(Error::TargetNotFound(_))));
     }
 }
