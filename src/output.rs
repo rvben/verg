@@ -2,12 +2,14 @@ use std::io::IsTerminal;
 
 pub struct OutputConfig {
     pub json: bool,
+    pub color: bool,
 }
 
 impl OutputConfig {
     pub fn new(json_flag: bool) -> Self {
         let json = json_flag || !std::io::stdout().is_terminal();
-        Self { json }
+        let color = std::io::stderr().is_terminal();
+        Self { json, color }
     }
 }
 

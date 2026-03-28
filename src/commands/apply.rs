@@ -28,11 +28,11 @@ pub fn print_result(result: &EngineResult, output: &OutputConfig) {
     } else {
         for summary in &result.summaries {
             for r in &summary.resources {
-                let symbol = match r.status {
-                    ResourceStatus::Ok => "\x1b[32m✓\x1b[0m",
-                    ResourceStatus::Changed => "\x1b[33m✗\x1b[0m",
-                    ResourceStatus::Failed => "\x1b[31m✗\x1b[0m",
-                    ResourceStatus::Skipped => "\x1b[90m-\x1b[0m",
+                let (symbol, status_text) = match r.status {
+                    ResourceStatus::Ok => ("✓", "already ok"),
+                    ResourceStatus::Changed => ("✗", "changed"),
+                    ResourceStatus::Failed => ("✗", "FAILED"),
+                    ResourceStatus::Skipped => ("-", "skipped"),
                 };
                 let detail = match &r.diff {
                     Some(d) => format!(" → {d}"),
@@ -41,16 +41,24 @@ pub fn print_result(result: &EngineResult, output: &OutputConfig) {
                         None => String::new(),
                     },
                 };
-                let status_text = match r.status {
-                    ResourceStatus::Ok => "already ok",
-                    ResourceStatus::Changed => "changed",
-                    ResourceStatus::Failed => "FAILED",
-                    ResourceStatus::Skipped => "skipped",
-                };
-                eprintln!(
-                    "{}: {}.{} {symbol} {status_text}{detail}",
-                    summary.host, r.resource_type, r.name
-                );
+                if output.color {
+                    use owo_colors::OwoColorize;
+                    let colored_symbol = match r.status {
+                        ResourceStatus::Ok => symbol.green().to_string(),
+                        ResourceStatus::Changed => symbol.yellow().to_string(),
+                        ResourceStatus::Failed => symbol.red().to_string(),
+                        ResourceStatus::Skipped => symbol.dimmed().to_string(),
+                    };
+                    eprintln!(
+                        "{}: {}.{} {} {status_text}{detail}",
+                        summary.host, r.resource_type, r.name, colored_symbol
+                    );
+                } else {
+                    eprintln!(
+                        "{}: {}.{} {symbol} {status_text}{detail}",
+                        summary.host, r.resource_type, r.name
+                    );
+                }
             }
             eprintln!(
                 "{}: {} changed, {} ok, {} failed, {} skipped\n",
