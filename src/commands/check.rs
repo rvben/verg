@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::engine::Engine;
-use crate::error::{self, Error};
+use crate::error::Error;
 use crate::output::OutputConfig;
 
 pub async fn run(
@@ -15,9 +15,5 @@ pub async fn run(
         let json = serde_json::to_string_pretty(&result.summaries).unwrap();
         println!("{json}");
     }
-    Ok(if result.has_changes() {
-        error::exit_codes::NOTHING_CHANGED
-    } else {
-        error::exit_codes::SUCCESS
-    })
+    Ok(result.exit_code())
 }

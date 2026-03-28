@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::engine::{Engine, EngineResult};
-use crate::error::{self, Error};
+use crate::error::Error;
 use crate::output::OutputConfig;
 use crate::resources::ResourceStatus;
 
@@ -18,7 +18,7 @@ pub async fn run(
         eprintln!("Warning: failed to write change log: {e}");
     }
 
-    Ok(exit_code(&result))
+    Ok(result.exit_code())
 }
 
 pub fn print_result(result: &EngineResult, output: &OutputConfig) {
@@ -69,19 +69,5 @@ pub fn print_result(result: &EngineResult, output: &OutputConfig) {
                 summary.summary.skipped
             );
         }
-    }
-}
-
-fn exit_code(result: &EngineResult) -> i32 {
-    if result.has_failures() {
-        if result.has_changes() || result.summaries.iter().any(|s| s.summary.ok > 0) {
-            error::exit_codes::PARTIAL_FAILURE
-        } else {
-            error::exit_codes::TOTAL_FAILURE
-        }
-    } else if result.has_changes() {
-        error::exit_codes::SUCCESS
-    } else {
-        error::exit_codes::NOTHING_CHANGED
     }
 }

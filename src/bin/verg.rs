@@ -22,8 +22,8 @@ struct Cli {
     #[arg(long, env = "VERG_PATH", global = true)]
     path: Option<PathBuf>,
 
-    #[arg(long, default_value = "10", global = true)]
-    parallel: usize,
+    #[arg(long, default_value = "10", global = true, value_parser = clap::value_parser!(u16).range(1..))]
+    parallel: u16,
 
     /// Path to SSH config file
     #[arg(long, env = "VERG_SSH_CONFIG", global = true)]
@@ -85,15 +85,27 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
 
     match cli.command {
         Command::Apply { targets } => {
-            let engine = build_engine(cli.parallel, cli.ssh_config.clone(), cli.agent_dir.clone())?;
+            let engine = build_engine(
+                cli.parallel.into(),
+                cli.ssh_config.clone(),
+                cli.agent_dir.clone(),
+            )?;
             commands::apply::run(&engine, &base_dir, &targets, output).await
         }
         Command::Diff { targets } => {
-            let engine = build_engine(cli.parallel, cli.ssh_config.clone(), cli.agent_dir.clone())?;
+            let engine = build_engine(
+                cli.parallel.into(),
+                cli.ssh_config.clone(),
+                cli.agent_dir.clone(),
+            )?;
             commands::diff::run(&engine, &base_dir, &targets, output).await
         }
         Command::Check { targets } => {
-            let engine = build_engine(cli.parallel, cli.ssh_config.clone(), cli.agent_dir.clone())?;
+            let engine = build_engine(
+                cli.parallel.into(),
+                cli.ssh_config.clone(),
+                cli.agent_dir.clone(),
+            )?;
             commands::check::run(&engine, &base_dir, &targets, output).await
         }
         Command::Schema => {

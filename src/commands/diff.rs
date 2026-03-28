@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::engine::{Engine, EngineResult};
-use crate::error::{self, Error};
+use crate::error::Error;
 use crate::output::OutputConfig;
 use crate::resources::ResourceStatus;
 
@@ -13,11 +13,7 @@ pub async fn run(
 ) -> Result<i32, Error> {
     let result = engine.run(base_dir, targets, true).await?;
     print_diff(&result, output);
-    Ok(if result.has_changes() {
-        error::exit_codes::SUCCESS
-    } else {
-        error::exit_codes::NOTHING_CHANGED
-    })
+    Ok(result.exit_code())
 }
 
 fn print_diff(result: &EngineResult, output: &OutputConfig) {

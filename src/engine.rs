@@ -27,6 +27,23 @@ impl EngineResult {
     pub fn has_changes(&self) -> bool {
         self.summaries.iter().any(|s| s.summary.changed > 0)
     }
+
+    /// Compute the process exit code based on the run outcome.
+    /// Failures take priority over changes.
+    pub fn exit_code(&self) -> i32 {
+        use crate::error::exit_codes;
+        if self.has_failures() {
+            if self.has_changes() || self.summaries.iter().any(|s| s.summary.ok > 0) {
+                exit_codes::PARTIAL_FAILURE
+            } else {
+                exit_codes::TOTAL_FAILURE
+            }
+        } else if self.has_changes() {
+            exit_codes::SUCCESS
+        } else {
+            exit_codes::NOTHING_CHANGED
+        }
+    }
 }
 
 impl Engine {
