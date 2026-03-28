@@ -78,11 +78,6 @@ impl Inventory {
                 }
                 Ok(matches)
             }
-            Selector::Host(name) => self
-                .hosts
-                .get(name)
-                .map(|h| vec![h])
-                .ok_or_else(|| Error::TargetNotFound(name.clone())),
             Selector::Exclude(inner) => {
                 let excluded = self.filter(inner)?;
                 let excluded_names: std::collections::HashSet<_> =
