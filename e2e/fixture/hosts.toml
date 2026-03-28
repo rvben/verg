@@ -1,5 +1,3 @@
 [hosts.target]
-address = "127.0.0.1"
-port = 2222
-user = "root"
+address = "verg-e2e"
 groups = ["test"]

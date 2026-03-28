@@ -100,17 +100,25 @@ ssh -F "$SSH_CONFIG" verg-e2e "mkdir -p /usr/local/share/verg && echo '$VERSION'
 # --- Test 1: diff (dry-run) ---
 
 info "Test 1: verg diff..."
-DIFF_OUTPUT=$("$VERG" diff --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>&1) || true
+DIFF_EXIT=0
+DIFF_OUTPUT=$("$VERG" diff --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>&1) || DIFF_EXIT=$?
+if [ "$DIFF_EXIT" -ge 2 ]; then
+    fail "diff exited with error code $DIFF_EXIT"
+fi
 if [ -z "$DIFF_OUTPUT" ]; then
     fail "diff returned empty output"
 fi
 echo "$DIFF_OUTPUT" | python3 -m json.tool > /dev/null 2>&1 || fail "diff output is not valid JSON: $DIFF_OUTPUT"
-info "  diff returned valid JSON"
+info "  diff returned valid JSON (exit $DIFF_EXIT)"
 
 # --- Test 2: apply ---
 
 info "Test 2: verg apply..."
-APPLY_OUTPUT=$("$VERG" apply --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>/dev/null) || true
+APPLY_EXIT=0
+APPLY_OUTPUT=$("$VERG" apply --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>/dev/null) || APPLY_EXIT=$?
+if [ "$APPLY_EXIT" -ge 2 ]; then
+    fail "apply exited with error code $APPLY_EXIT"
+fi
 echo "$APPLY_OUTPUT" | python3 -m json.tool > /dev/null 2>&1 || fail "apply output is not valid JSON"
 
 # Check that changes were made
@@ -142,7 +150,11 @@ info "  /tmp/verg-marker: exists"
 # --- Test 4: idempotency ---
 
 info "Test 4: idempotency (second apply)..."
-APPLY2_OUTPUT=$("$VERG" apply --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>/dev/null) || true
+APPLY2_EXIT=0
+APPLY2_OUTPUT=$("$VERG" apply --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>/dev/null) || APPLY2_EXIT=$?
+if [ "$APPLY2_EXIT" -ge 2 ]; then
+    fail "second apply exited with error code $APPLY2_EXIT"
+fi
 CHANGED2=$(echo "$APPLY2_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['summary']['changed'])" 2>/dev/null)
 if [ "$CHANGED2" != "0" ]; then
     warn "  second apply reported $CHANGED2 change(s) — not fully idempotent"
@@ -154,8 +166,11 @@ fi
 # --- Test 5: check ---
 
 info "Test 5: verg check..."
-"$VERG" check --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json > /dev/null 2>&1
-CHECK_EXIT=$?
+CHECK_EXIT=0
+"$VERG" check --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json > /dev/null 2>&1 || CHECK_EXIT=$?
+if [ "$CHECK_EXIT" -ge 2 ]; then
+    fail "check exited with failure code $CHECK_EXIT (expected 0 or 1)"
+fi
 info "  check exit code: $CHECK_EXIT"
 
 # --- Test 6: changelog written ---
