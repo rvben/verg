@@ -67,7 +67,11 @@ jobs:
 
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Install maturin
         run: pip install maturin
@@ -90,6 +94,22 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Build static agent binary (musl)
+        if: contains(matrix.target, 'linux')
+        shell: bash
+        run: |
+          MUSL_TARGET="${{ matrix.target }}"
+          MUSL_TARGET="${MUSL_TARGET/gnu/musl}"
+          rustup target add "$MUSL_TARGET"
+          if [[ "$MUSL_TARGET" == *"aarch64"* ]]; then
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
+              cargo build --release --target "$MUSL_TARGET" --bin verg-agent
+          else
+            cargo build --release --target "$MUSL_TARGET" --bin verg-agent
+          fi
+          # Use the musl binary as the standalone agent
+          cp "target/$MUSL_TARGET/release/verg-agent" "verg-agent-static-${{ matrix.target }}"
+
       - name: Verify binary
         if: ${{ !contains(matrix.target, 'aarch64-unknown-linux') }}
         shell: bash
@@ -106,9 +126,13 @@ jobs:
           cp "target/${{ matrix.target }}/release/verg-agent" release-package/verg-agent
           tar -czf "${ARCHIVE_NAME}.tar.gz" -C release-package verg verg-agent
 
-          # Standalone agent binary for auto-download
+          # Standalone agent binary for auto-download (musl for Linux, gnu for macOS)
           AGENT_NAME="verg-agent-${{ matrix.target }}"
-          cp "target/${{ matrix.target }}/release/verg-agent" "${AGENT_NAME}"
+          if [[ -f "verg-agent-static-${{ matrix.target }}" ]]; then
+            cp "verg-agent-static-${{ matrix.target }}" "${AGENT_NAME}"
+          else
+            cp "target/${{ matrix.target }}/release/verg-agent" "${AGENT_NAME}"
+          fi
 
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             shasum -a 256 "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
