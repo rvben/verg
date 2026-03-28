@@ -1,6 +1,7 @@
 pub mod apt_repo;
 pub mod cmd;
 pub mod dag;
+pub mod directory;
 pub mod docker_compose;
 pub mod download;
 pub mod file;
@@ -103,6 +104,7 @@ impl ResolvedResource {
 pub fn execute_resource(resource: &ResolvedResource, dry_run: bool) -> ResourceResult {
     let result = match resource.resource_type.as_str() {
         "apt_repo" => apt_repo::execute(resource, dry_run),
+        "directory" => directory::execute(resource, dry_run),
         "docker_compose" => docker_compose::execute(resource, dry_run),
         "download" => download::execute(resource, dry_run),
         "pkg" => pkg::execute(resource, dry_run),

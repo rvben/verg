@@ -25,6 +25,18 @@ fn resource_schemas() -> Value {
             },
             "required": ["name", "url", "gpg_key"],
         },
+        "directory": {
+            "description": "Manage directories with ownership and permissions",
+            "properties": {
+                "path": {"type": "string", "description": "Directory path"},
+                "owner": {"type": "string", "description": "Owner (username or UID)"},
+                "group": {"type": "string", "description": "Group (groupname or GID)"},
+                "mode": {"type": "string", "description": "Permissions (octal, e.g. '0755')"},
+                "recurse": {"type": "boolean", "description": "Apply ownership recursively", "default": false},
+                "state": {"type": "string", "enum": ["present", "absent"], "default": "present"},
+            },
+            "required": ["path"],
+        },
         "download": {
             "description": "Download a file from a URL, optionally extract archives",
             "properties": {
