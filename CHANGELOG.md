@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+
+## [0.3.0](https://github.com/rvben/verg/compare/v0.2.1...v0.3.0) - 2026-03-28
+
+### Added
+
+- **verg**: add $env. secret references in variables ([c4d06c2](https://github.com/rvben/verg/commit/c4d06c2882a925c98567249cbb4960baa84f1269))
+- **resources**: add download resource type for binary installs ([b71dc2a](https://github.com/rvben/verg/commit/b71dc2a526747af7608353ed8eb861a58987771e))
+- **resources**: add docker_compose resource type ([75b3a50](https://github.com/rvben/verg/commit/75b3a504890c0a621a0fe2fdf03242807bc33e0a))
+- **verg**: add apt_repo resource type ([0769c6c](https://github.com/rvben/verg/commit/0769c6cf560aded01f81daff72c5c8c1e901eb4f))
+
 ## [0.2.1](https://github.com/rvben/verg/compare/v0.2.0...v0.2.1) - 2026-03-28
 
 ### Fixed
