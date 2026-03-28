@@ -127,6 +127,16 @@ impl SshTransport {
                 .map_err(|e| Error::Config(format!("failed to chmod agent binary: {e}")))?;
         }
 
+        // Clean up old versions
+        if let Ok(entries) = std::fs::read_dir(&self.agent_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && path != version_dir {
+                    let _ = std::fs::remove_dir_all(&path);
+                }
+            }
+        }
+
         eprintln!("Cached at {}", cached.display());
         Ok(cached)
     }
