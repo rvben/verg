@@ -7,8 +7,6 @@ CONTAINER_NAME="verg-e2e"
 SSH_PORT=2222
 SSH_KEY="$SCRIPT_DIR/.ssh/id_ed25519"
 SSH_CONFIG="$SCRIPT_DIR/.ssh/config"
-AGENT_BINARY="$PROJECT_DIR/target/x86_64-unknown-linux-musl/release/verg-agent"
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -29,17 +27,18 @@ trap cleanup EXIT
 info "Building verg (host)..."
 cargo build --release --manifest-path "$PROJECT_DIR/Cargo.toml" 2>&1 | tail -1
 
-info "Cross-compiling verg-agent for linux/amd64..."
-if ! command -v cross &>/dev/null; then
-    warn "'cross' not found. Attempting cargo build with musl target..."
-    rustup target add x86_64-unknown-linux-musl 2>/dev/null || true
-    cargo build --release --target x86_64-unknown-linux-musl --manifest-path "$PROJECT_DIR/Cargo.toml" --bin verg-agent 2>&1 | tail -1
-else
-    cross build --release --target x86_64-unknown-linux-musl --manifest-path "$PROJECT_DIR/Cargo.toml" --bin verg-agent 2>&1 | tail -1
-fi
+info "Building verg-agent for linux/amd64 (in Docker)..."
+AGENT_BINARY="$PROJECT_DIR/target/e2e/verg-agent"
+mkdir -p "$(dirname "$AGENT_BINARY")"
+docker run --rm \
+    -v "$PROJECT_DIR:/src" \
+    -w /src \
+    rust:1.90-slim \
+    sh -c "cargo build --release --bin verg-agent 2>&1 | tail -3 && \
+           cp target/release/verg-agent target/e2e/verg-agent"
 
 if [ ! -f "$AGENT_BINARY" ]; then
-    fail "verg-agent not found at $AGENT_BINARY. Cross-compilation may have failed."
+    fail "verg-agent not found at $AGENT_BINARY. Docker build may have failed."
 fi
 
 VERG="$PROJECT_DIR/target/release/verg"
@@ -74,8 +73,11 @@ docker run -d \
     --name "$CONTAINER_NAME" \
     -p "$SSH_PORT:22" \
     -v "$SSH_KEY.pub:/root/.ssh/authorized_keys:ro" \
-    -v "$AGENT_BINARY:/usr/local/bin/verg-agent:ro" \
     verg-e2e
+
+info "Copying agent binary into container..."
+docker cp "$AGENT_BINARY" "$CONTAINER_NAME:/usr/local/bin/verg-agent"
+docker exec "$CONTAINER_NAME" chmod +x /usr/local/bin/verg-agent
 
 info "Waiting for SSH..."
 for i in $(seq 1 30); do
@@ -91,14 +93,18 @@ done
 # --- Pre-flight: write version stamp so verg skips binary push ---
 
 info "Writing agent version stamp..."
-VERSION=$(cargo metadata --manifest-path "$PROJECT_DIR/Cargo.toml" --format-version 1 --no-deps | grep '"version"' | head -1 | sed 's/.*"\([0-9.]*\)".*/\1/')
+VERSION=$(grep '^version' "$PROJECT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+info "  version: $VERSION"
 ssh -F "$SSH_CONFIG" verg-e2e "mkdir -p /usr/local/share/verg && echo '$VERSION' > /usr/local/share/verg/version"
 
 # --- Test 1: diff (dry-run) ---
 
 info "Test 1: verg diff..."
-DIFF_OUTPUT=$("$VERG" diff --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>/dev/null) || true
-echo "$DIFF_OUTPUT" | python3 -m json.tool > /dev/null 2>&1 || fail "diff output is not valid JSON"
+DIFF_OUTPUT=$("$VERG" diff --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>&1) || true
+if [ -z "$DIFF_OUTPUT" ]; then
+    fail "diff returned empty output"
+fi
+echo "$DIFF_OUTPUT" | python3 -m json.tool > /dev/null 2>&1 || fail "diff output is not valid JSON: $DIFF_OUTPUT"
 info "  diff returned valid JSON"
 
 # --- Test 2: apply ---
@@ -118,9 +124,9 @@ info "  apply made $CHANGED change(s)"
 
 info "Test 3: verifying resources..."
 
-# Check htop installed
-ssh -F "$SSH_CONFIG" verg-e2e "dpkg -s htop" > /dev/null 2>&1 || fail "htop not installed"
-info "  htop: installed"
+# Check jq installed
+ssh -F "$SSH_CONFIG" verg-e2e "dpkg -s jq" > /dev/null 2>&1 || fail "jq not installed"
+info "  jq: installed"
 
 # Check file content
 FILE_CONTENT=$(ssh -F "$SSH_CONFIG" verg-e2e "cat /tmp/verg-test.txt" 2>/dev/null)

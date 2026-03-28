@@ -6,9 +6,7 @@ RUN apt-get update && apt-get install -y \
     openssh-server \
     systemd \
     systemd-sysv \
-    nginx \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+    curl
 
 # Configure sshd
 RUN mkdir -p /run/sshd && \

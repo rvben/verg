@@ -1,6 +1,6 @@
 # Test: install a package
-[resource.pkg.htop]
-name = "htop"
+[resource.pkg.jq]
+name = "jq"
 state = "present"
 
 # Test: write a file with variable interpolation
