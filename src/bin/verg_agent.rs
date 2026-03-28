@@ -32,6 +32,7 @@ fn main() {
 
     let mut results = Vec::new();
     let mut failed_fqns = std::collections::HashSet::new();
+    let mut services_to_restart = std::collections::HashSet::new();
 
     for layer in &layers {
         for resource in layer {
@@ -51,10 +52,70 @@ fn main() {
             }
 
             let result = resources::execute_resource(resource, dry_run);
+            if result.status == ResourceStatus::Changed {
+                for svc in &resource.notify {
+                    services_to_restart.insert(svc.clone());
+                }
+            }
             if result.status == ResourceStatus::Failed {
                 failed_fqns.insert(resource.fqn());
             }
             results.push(result);
+        }
+    }
+
+    // Restart notified services
+    for svc in &services_to_restart {
+        if dry_run {
+            results.push(resources::ResourceResult {
+                resource_type: "service".into(),
+                name: format!("{svc} (restart)"),
+                status: ResourceStatus::Changed,
+                diff: Some(format!("would restart {svc}")),
+                from: None,
+                to: None,
+                error: None,
+            });
+        } else {
+            let output = std::process::Command::new("systemctl")
+                .args(["restart", svc])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    results.push(resources::ResourceResult {
+                        resource_type: "service".into(),
+                        name: format!("{svc} (restart)"),
+                        status: ResourceStatus::Changed,
+                        diff: Some(format!("restarted {svc}")),
+                        from: None,
+                        to: None,
+                        error: None,
+                    });
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    results.push(resources::ResourceResult {
+                        resource_type: "service".into(),
+                        name: format!("{svc} (restart)"),
+                        status: ResourceStatus::Failed,
+                        diff: None,
+                        from: None,
+                        to: None,
+                        error: Some(format!("restart failed: {stderr}")),
+                    });
+                }
+                Err(e) => {
+                    results.push(resources::ResourceResult {
+                        resource_type: "service".into(),
+                        name: format!("{svc} (restart)"),
+                        status: ResourceStatus::Failed,
+                        diff: None,
+                        from: None,
+                        to: None,
+                        error: Some(format!("restart failed: {e}")),
+                    });
+                }
+            }
         }
     }
 

@@ -31,6 +31,22 @@ fn is_installed(mgr: &PkgManager, name: &str) -> Result<bool, Error> {
     Ok(output.status.success())
 }
 
+fn update_cache(mgr: &PkgManager) -> Result<(), Error> {
+    let output = match mgr {
+        PkgManager::Apt => run_cmd("apt-get", &["update", "-qq"])?,
+        PkgManager::Dnf => run_cmd("dnf", &["makecache", "-q"])?,
+        PkgManager::Pacman => run_cmd("pacman", &["-Sy"])?,
+    };
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(Error::Resource(format!(
+            "failed to update package cache: {stderr}"
+        )))
+    }
+}
+
 fn install(mgr: &PkgManager, name: &str) -> Result<(), Error> {
     let output = match mgr {
         PkgManager::Apt => run_cmd("apt-get", &["install", "-y", name])?,
@@ -85,6 +101,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     let mut any_changed = false;
     let mut changes = Vec::new();
+    let mut cache_updated = false;
 
     for name in &names {
         let installed = is_installed(&mgr, name)?;
@@ -93,6 +110,10 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 if dry_run {
                     changes.push(format!("+{name}"));
                 } else {
+                    if !cache_updated {
+                        update_cache(&mgr)?;
+                        cache_updated = true;
+                    }
                     install(&mgr, name)?;
                 }
                 any_changed = true;

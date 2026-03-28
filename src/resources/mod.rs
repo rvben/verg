@@ -87,6 +87,8 @@ pub struct ResolvedResource {
     pub props: HashMap<String, toml::Value>,
     #[serde(default)]
     pub after: Vec<String>,
+    #[serde(default)]
+    pub notify: Vec<String>,
 }
 
 impl ResolvedResource {
@@ -175,6 +177,7 @@ mod tests {
             name: "nginx".into(),
             props: HashMap::new(),
             after: vec![],
+            notify: vec![],
         };
         assert_eq!(r.fqn(), "pkg.nginx");
     }

@@ -83,6 +83,7 @@ mod tests {
             name: name.into(),
             props: HashMap::new(),
             after: after.iter().map(|s| s.to_string()).collect(),
+            notify: vec![],
         }
     }
 

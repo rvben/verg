@@ -13,15 +13,15 @@ const AGENT_PATH: &str = "/usr/local/bin/verg-agent";
 const VERSION_PATH: &str = "/usr/local/share/verg/version";
 
 pub struct SshTransport {
-    pub agent_binary: PathBuf,
+    pub agent_dir: PathBuf,
     pub version: String,
     pub ssh_config: Option<PathBuf>,
 }
 
 impl SshTransport {
-    pub fn new(agent_binary: PathBuf, version: String) -> Self {
+    pub fn new(agent_dir: PathBuf, version: String) -> Self {
         Self {
-            agent_binary,
+            agent_dir,
             version,
             ssh_config: None,
         }
@@ -34,6 +34,60 @@ impl SshTransport {
             args.push(config.to_string_lossy().into_owned());
         }
         args
+    }
+
+    async fn detect_arch(
+        &self,
+        user: &str,
+        address: &str,
+        port: Option<u16>,
+    ) -> Result<String, Error> {
+        let target = format!("{user}@{address}");
+        let mut args = self.ssh_base_args();
+        if let Some(p) = port {
+            args.extend(["-p".into(), p.to_string()]);
+        }
+        args.extend(["-o".into(), "ConnectTimeout=10".into(), target]);
+        args.push("uname -m".into());
+
+        let output = Command::new("ssh")
+            .args(&args)
+            .output()
+            .await
+            .map_err(|e| Error::Connection(format!("ssh uname: {e}")))?;
+
+        if !output.status.success() {
+            return Err(Error::Connection(
+                "failed to detect target architecture".into(),
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn agent_binary_for_arch(&self, arch: &str) -> Result<PathBuf, Error> {
+        // Try arch-specific names first, then fall back to plain verg-agent
+        let candidates = [
+            format!("verg-agent-{arch}-linux"),
+            format!("verg-agent-{arch}"),
+            "verg-agent".to_string(),
+        ];
+
+        for name in &candidates {
+            let path = self.agent_dir.join(name);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        Err(Error::Config(format!(
+            "no agent binary found for architecture '{arch}' in {}\n\
+             Expected one of: {}\n\
+             Hint: build with `cargo build --release --target <target> --bin verg-agent` \
+             and place in the agents directory",
+            self.agent_dir.display(),
+            candidates.join(", ")
+        )))
     }
 
     async fn check_version(
@@ -60,7 +114,13 @@ impl SshTransport {
         Ok(remote_version == self.version)
     }
 
-    async fn push_binary(&self, user: &str, address: &str, port: Option<u16>) -> Result<(), Error> {
+    async fn push_binary(
+        &self,
+        user: &str,
+        address: &str,
+        port: Option<u16>,
+        agent_binary: &std::path::Path,
+    ) -> Result<(), Error> {
         let target = format!("{user}@{address}");
 
         // Create directories
@@ -90,7 +150,7 @@ impl SshTransport {
         if let Some(p) = port {
             scp_args.extend(["-P".into(), p.to_string()]);
         }
-        scp_args.push(self.agent_binary.to_string_lossy().into_owned());
+        scp_args.push(agent_binary.to_string_lossy().into_owned());
         scp_args.push(format!("{target}:{AGENT_PATH}"));
         let output = Command::new("scp")
             .args(&scp_args)
@@ -143,7 +203,9 @@ impl SshTransport {
     ) -> Result<ExecResult, Error> {
         let has_version = self.check_version(user, address, port).await?;
         if !has_version {
-            self.push_binary(user, address, port).await?;
+            let arch = self.detect_arch(user, address, port).await?;
+            let agent_binary = self.agent_binary_for_arch(&arch)?;
+            self.push_binary(user, address, port, &agent_binary).await?;
         }
 
         let target = format!("{user}@{address}");

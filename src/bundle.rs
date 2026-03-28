@@ -34,6 +34,7 @@ impl Bundle {
             for decl in sf.resources()? {
                 let mut props = HashMap::new();
                 let mut after = Vec::new();
+                let mut notify = Vec::new();
 
                 for (key, value) in &decl.props {
                     if key == "after" {
@@ -43,6 +44,18 @@ impl Bundle {
                                     after.push(s.clone());
                                 }
                             }
+                        }
+                    } else if key == "notify" {
+                        match value {
+                            toml::Value::String(s) => notify.push(s.clone()),
+                            toml::Value::Array(arr) => {
+                                for item in arr {
+                                    if let toml::Value::String(s) = item {
+                                        notify.push(s.clone());
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     } else {
                         let interpolated = match value {
@@ -81,6 +94,7 @@ impl Bundle {
                     name: decl.name,
                     props,
                     after,
+                    notify,
                 });
             }
         }

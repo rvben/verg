@@ -29,6 +29,10 @@ struct Cli {
     #[arg(long, env = "VERG_SSH_CONFIG", global = true)]
     ssh_config: Option<PathBuf>,
 
+    /// Directory containing verg-agent binaries per architecture
+    #[arg(long, env = "VERG_AGENT_DIR", global = true)]
+    agent_dir: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -81,15 +85,15 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
 
     match cli.command {
         Command::Apply { targets } => {
-            let engine = build_engine(cli.parallel, cli.ssh_config.clone())?;
+            let engine = build_engine(cli.parallel, cli.ssh_config.clone(), cli.agent_dir.clone())?;
             commands::apply::run(&engine, &base_dir, &targets, output).await
         }
         Command::Diff { targets } => {
-            let engine = build_engine(cli.parallel, cli.ssh_config.clone())?;
+            let engine = build_engine(cli.parallel, cli.ssh_config.clone(), cli.agent_dir.clone())?;
             commands::diff::run(&engine, &base_dir, &targets, output).await
         }
         Command::Check { targets } => {
-            let engine = build_engine(cli.parallel, cli.ssh_config.clone())?;
+            let engine = build_engine(cli.parallel, cli.ssh_config.clone(), cli.agent_dir.clone())?;
             commands::check::run(&engine, &base_dir, &targets, output).await
         }
         Command::Schema => {
@@ -109,17 +113,32 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
     }
 }
 
-fn build_engine(parallel: usize, ssh_config: Option<PathBuf>) -> Result<Engine, Error> {
-    let current_exe = std::env::current_exe()
-        .map_err(|e| Error::Other(format!("failed to get current exe: {e}")))?;
-    let agent_binary = current_exe
-        .parent()
-        .ok_or_else(|| Error::Other("failed to get exe directory".into()))?
-        .join("verg-agent");
+fn build_engine(
+    parallel: usize,
+    ssh_config: Option<PathBuf>,
+    agent_dir: Option<PathBuf>,
+) -> Result<Engine, Error> {
+    let agent_dir = match agent_dir {
+        Some(dir) => dir,
+        None => {
+            // Default: look next to the verg binary, then ~/.local/share/verg/agents/
+            let exe_dir = std::env::current_exe()
+                .map_err(|e| Error::Other(format!("failed to get current exe: {e}")))?;
+            let beside_exe = exe_dir.parent().unwrap().join("agents");
+            if beside_exe.is_dir() {
+                beside_exe
+            } else {
+                dirs::data_dir()
+                    .unwrap_or_else(|| PathBuf::from("/usr/local/share"))
+                    .join("verg")
+                    .join("agents")
+            }
+        }
+    };
 
     let version = env!("CARGO_PKG_VERSION").to_string();
 
-    let mut transport = SshTransport::new(agent_binary, version);
+    let mut transport = SshTransport::new(agent_dir, version);
     transport.ssh_config = ssh_config;
 
     Ok(Engine {

@@ -54,7 +54,7 @@ impl Engine {
             let host = host.clone();
             let state_files = state_files.clone();
             let mut transport = SshTransport::new(
-                self.transport.agent_binary.clone(),
+                self.transport.agent_dir.clone(),
                 self.transport.version.clone(),
             );
             transport.ssh_config = self.transport.ssh_config.clone();
