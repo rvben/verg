@@ -1,0 +1,15 @@
+# Test: install a package
+[resource.pkg.htop]
+name = "htop"
+state = "present"
+
+# Test: write a file with variable interpolation
+[resource.file.greeting]
+path = "/tmp/verg-test.txt"
+content = "{{ greeting }}"
+mode = "0644"
+
+# Test: command with guard
+[resource.cmd.marker]
+command = "echo 'verg was here' > /tmp/verg-marker"
+creates = "/tmp/verg-marker"

@@ -15,6 +15,7 @@ const VERSION_PATH: &str = "/usr/local/share/verg/version";
 pub struct SshTransport {
     pub agent_binary: PathBuf,
     pub version: String,
+    pub ssh_config: Option<PathBuf>,
 }
 
 impl SshTransport {
@@ -22,14 +23,27 @@ impl SshTransport {
         Self {
             agent_binary,
             version,
+            ssh_config: None,
         }
+    }
+
+    fn ssh_base_args(&self) -> Vec<String> {
+        let mut args = vec!["-o".into(), "BatchMode=yes".into()];
+        if let Some(config) = &self.ssh_config {
+            args.push("-F".into());
+            args.push(config.to_string_lossy().into_owned());
+        }
+        args
     }
 
     async fn check_version(&self, user: &str, address: &str) -> Result<bool, Error> {
         let target = format!("{user}@{address}");
+        let mut args = self.ssh_base_args();
+        args.extend(["-o".into(), "ConnectTimeout=10".into(), target]);
+        args.push(format!("cat {VERSION_PATH} 2>/dev/null"));
+
         let output = Command::new("ssh")
-            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", &target])
-            .arg(format!("cat {VERSION_PATH} 2>/dev/null"))
+            .args(&args)
             .output()
             .await
             .map_err(|e| Error::Connection(format!("ssh to {address}: {e}")))?;
@@ -41,9 +55,14 @@ impl SshTransport {
     async fn push_binary(&self, user: &str, address: &str) -> Result<(), Error> {
         let target = format!("{user}@{address}");
 
+        // Create directories
+        let mut args = self.ssh_base_args();
+        args.extend([
+            target.clone(),
+            "mkdir -p /usr/local/bin /usr/local/share/verg".into(),
+        ]);
         let output = Command::new("ssh")
-            .args(["-o", "BatchMode=yes", &target])
-            .arg("mkdir -p /usr/local/bin /usr/local/share/verg")
+            .args(&args)
             .output()
             .await
             .map_err(|e| Error::Connection(format!("ssh mkdir: {e}")))?;
@@ -55,10 +74,12 @@ impl SshTransport {
             )));
         }
 
+        // Copy binary
+        let mut scp_args = self.ssh_base_args();
+        scp_args.push(self.agent_binary.to_string_lossy().into_owned());
+        scp_args.push(format!("{target}:{AGENT_PATH}"));
         let output = Command::new("scp")
-            .args(["-o", "BatchMode=yes"])
-            .arg(self.agent_binary.to_str().unwrap())
-            .arg(format!("{target}:{AGENT_PATH}"))
+            .args(&scp_args)
             .output()
             .await
             .map_err(|e| Error::Connection(format!("scp: {e}")))?;
@@ -70,12 +91,17 @@ impl SshTransport {
             )));
         }
 
-        let output = Command::new("ssh")
-            .args(["-o", "BatchMode=yes", &target])
-            .arg(format!(
+        // Set permissions and write version
+        let mut args = self.ssh_base_args();
+        args.extend([
+            target,
+            format!(
                 "chmod +x {AGENT_PATH} && echo '{}' > {VERSION_PATH}",
                 self.version
-            ))
+            ),
+        ]);
+        let output = Command::new("ssh")
+            .args(&args)
             .output()
             .await
             .map_err(|e| Error::Connection(format!("ssh chmod: {e}")))?;
@@ -110,8 +136,11 @@ impl SshTransport {
             cmd_str.push_str(" --dry-run");
         }
 
+        let mut args = self.ssh_base_args();
+        args.extend([target, cmd_str]);
+
         let mut child = Command::new("ssh")
-            .args(["-o", "BatchMode=yes", &target, &cmd_str])
+            .args(&args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

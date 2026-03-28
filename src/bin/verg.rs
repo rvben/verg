@@ -25,6 +25,10 @@ struct Cli {
     #[arg(long, default_value = "10", global = true)]
     parallel: usize,
 
+    /// Path to SSH config file
+    #[arg(long, env = "VERG_SSH_CONFIG", global = true)]
+    ssh_config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -77,15 +81,15 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
 
     match cli.command {
         Command::Apply { targets } => {
-            let engine = build_engine(cli.parallel)?;
+            let engine = build_engine(cli.parallel, cli.ssh_config.clone())?;
             commands::apply::run(&engine, &base_dir, &targets, output).await
         }
         Command::Diff { targets } => {
-            let engine = build_engine(cli.parallel)?;
+            let engine = build_engine(cli.parallel, cli.ssh_config.clone())?;
             commands::diff::run(&engine, &base_dir, &targets, output).await
         }
         Command::Check { targets } => {
-            let engine = build_engine(cli.parallel)?;
+            let engine = build_engine(cli.parallel, cli.ssh_config.clone())?;
             commands::check::run(&engine, &base_dir, &targets, output).await
         }
         Command::Schema => {
@@ -105,7 +109,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
     }
 }
 
-fn build_engine(parallel: usize) -> Result<Engine, Error> {
+fn build_engine(parallel: usize, ssh_config: Option<PathBuf>) -> Result<Engine, Error> {
     let current_exe = std::env::current_exe()
         .map_err(|e| Error::Other(format!("failed to get current exe: {e}")))?;
     let agent_binary = current_exe
@@ -115,8 +119,11 @@ fn build_engine(parallel: usize) -> Result<Engine, Error> {
 
     let version = env!("CARGO_PKG_VERSION").to_string();
 
+    let mut transport = SshTransport::new(agent_binary, version);
+    transport.ssh_config = ssh_config;
+
     Ok(Engine {
-        transport: SshTransport::new(agent_binary, version),
+        transport,
         parallel,
     })
 }

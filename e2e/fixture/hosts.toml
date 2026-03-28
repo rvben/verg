@@ -1,0 +1,4 @@
+[hosts.target]
+address = "verg-e2e"
+user = "root"
+groups = ["test"]

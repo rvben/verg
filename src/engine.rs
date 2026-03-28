@@ -53,10 +53,11 @@ impl Engine {
         for host in hosts {
             let host = host.clone();
             let state_files = state_files.clone();
-            let transport = SshTransport::new(
+            let mut transport = SshTransport::new(
                 self.transport.agent_binary.clone(),
                 self.transport.version.clone(),
             );
+            transport.ssh_config = self.transport.ssh_config.clone();
             let sem = semaphore.clone();
 
             join_set.spawn(async move {
