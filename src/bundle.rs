@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +16,9 @@ pub struct Bundle {
 }
 
 impl Bundle {
-    pub fn build(host: &Host, state_files: &[StateFile]) -> Result<Self, Error> {
+    /// Build a bundle for a specific host.
+    /// `base_dir` is the verg project directory (used to resolve `source` file paths).
+    pub fn build(host: &Host, state_files: &[StateFile], base_dir: &Path) -> Result<Self, Error> {
         let mut resources = Vec::new();
 
         for sf in state_files {
@@ -59,6 +62,18 @@ impl Bundle {
                             props.entry(k).or_insert(toml::Value::String(interpolated));
                         }
                     }
+                }
+
+                // Resolve `source` files on the control machine and inline as `content`
+                if let Some(toml::Value::String(source_path)) = props.remove("source") {
+                    let full_path = base_dir.join(&source_path);
+                    let content = std::fs::read_to_string(&full_path).map_err(|e| {
+                        Error::Config(format!(
+                            "failed to read source file {}: {e}",
+                            full_path.display()
+                        ))
+                    })?;
+                    props.insert("content".into(), toml::Value::String(content));
                 }
 
                 resources.push(ResolvedResource {
@@ -144,7 +159,7 @@ state = "present"
             ),
         ];
 
-        let bundle = Bundle::build(&host, &files).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
         assert_eq!(bundle.resources.len(), 2);
     }
 
@@ -161,7 +176,7 @@ content = "listen {{ http_port }}"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("listen 80".into())
@@ -180,7 +195,7 @@ after = ["pkg.nginx", "file.conf"]
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
         assert_eq!(bundle.resources[0].after, vec!["pkg.nginx", "file.conf"]);
         assert!(!bundle.resources[0].props.contains_key("after"));
     }
@@ -196,12 +211,36 @@ state = "present"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
         let serialized = bundle.to_toml().unwrap();
         let deserialized = Bundle::from_toml(&serialized).unwrap();
         assert_eq!(deserialized.host, "web1");
         assert_eq!(deserialized.resources.len(), 1);
         assert_eq!(deserialized.resources[0].fqn(), "pkg.nginx");
+    }
+
+    #[test]
+    fn bundle_resolves_source_to_content() {
+        let host = test_host();
+        let dir = tempfile::TempDir::new().unwrap();
+        let files_dir = dir.path().join("files");
+        std::fs::create_dir(&files_dir).unwrap();
+        std::fs::write(files_dir.join("test.conf"), "server_name web1;").unwrap();
+
+        let files = vec![parse_state(
+            r#"
+[resource.file.conf]
+path = "/etc/test.conf"
+source = "files/test.conf"
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        assert_eq!(
+            bundle.resources[0].props["content"],
+            toml::Value::String("server_name web1;".into())
+        );
+        assert!(!bundle.resources[0].props.contains_key("source"));
     }
 
     #[test]
@@ -214,7 +253,7 @@ content = "{{ undefined_var }}"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files);
+        let result = Bundle::build(&host, &files, Path::new("/tmp"));
         assert!(matches!(result, Err(Error::Parse(_))));
     }
 }

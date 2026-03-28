@@ -60,9 +60,10 @@ impl Engine {
             transport.ssh_config = self.transport.ssh_config.clone();
             let sem = semaphore.clone();
 
+            let base_dir = base_dir.to_path_buf();
             join_set.spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                let bundle = Bundle::build(&host, &state_files)?;
+                let bundle = Bundle::build(&host, &state_files, &base_dir)?;
                 let result = transport
                     .execute(&host.user, &host.address, host.port, &bundle, dry_run)
                     .await?;
