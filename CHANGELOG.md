@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+
+## [0.2.1](https://github.com/rvben/verg/compare/v0.2.0...v0.2.1) - 2026-03-28
+
+### Fixed
+
+- **verg**: build agent with musl for glibc-independent Linux binaries ([f9d2abd](https://github.com/rvben/verg/commit/f9d2abdf87543b3296f9398e8a25b2316df56e26))
+
 ## [0.2.0] - 2026-03-28
 
 ### Added
