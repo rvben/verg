@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.4.0](https://github.com/rvben/verg/compare/v0.3.0...v0.4.0) - 2026-03-28
+
+### Added
+
+- **verg**: add system facts and when conditionals ([ccdfe0b](https://github.com/rvben/verg/commit/ccdfe0b89c328315506679ca2d002e64ad61b649))
+- **verg**: add directory resource type with ownership and mode management ([e912a85](https://github.com/rvben/verg/commit/e912a85bf94bcb9ce44d90725797aa7cef368fad))
+- **verg**: support docker: prefix in notify for compose restarts ([0bbf82b](https://github.com/rvben/verg/commit/0bbf82b0b56af2453bdc22e50faa15290d90a176))
+
+### Fixed
+
+- **e2e**: use SSH config alias and tighten test assertions ([dcf0664](https://github.com/rvben/verg/commit/dcf0664242a1aca16f3d44d4ee00aac5f7140698))
+- **verg**: make download resource convergent and remove phantom template schema ([1e94f7a](https://github.com/rvben/verg/commit/1e94f7a6d7066316a53e730c680a7ee10fb7e41e))
+- **verg**: unify exit code handling and reject --parallel 0 ([c81a853](https://github.com/rvben/verg/commit/c81a8535edc2bb54158b892e67d8d0acfe3457aa))
+- **verg**: gracefully handle unreachable hosts instead of aborting ([8676a1c](https://github.com/rvben/verg/commit/8676a1c180a63e8b205a2c99023b290728a0a25a))
+- **verg**: clean up old agent version cache after download ([4e1025e](https://github.com/rvben/verg/commit/4e1025e7c432016d38e0246e1e6e7c4fd7fefd89))
+- **verg**: version agent binary cache to prevent stale binaries ([e6ce57d](https://github.com/rvben/verg/commit/e6ce57df155b0307483feb78c6d5a58c043a4484))
+
 ## [0.3.0](https://github.com/rvben/verg/compare/v0.2.1...v0.3.0) - 2026-03-28
 
 ### Added
