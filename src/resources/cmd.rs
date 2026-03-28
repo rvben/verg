@@ -21,18 +21,18 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         ));
     }
 
-    if let Some(path) = creates {
-        if Path::new(path).exists() {
-            return Ok(ResourceResult {
-                resource_type: "cmd".into(),
-                name: resource.name.clone(),
-                status: ResourceStatus::Ok,
-                diff: None,
-                from: None,
-                to: None,
-                error: None,
-            });
-        }
+    if let Some(path) = creates
+        && Path::new(path).exists()
+    {
+        return Ok(ResourceResult {
+            resource_type: "cmd".into(),
+            name: resource.name.clone(),
+            status: ResourceStatus::Ok,
+            diff: None,
+            from: None,
+            to: None,
+            error: None,
+        });
     }
 
     if let Some(cmd) = unless {
