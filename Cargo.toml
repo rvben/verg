@@ -7,7 +7,7 @@ description = "Desired-state infrastructure convergence engine"
 license = "MIT"
 repository = "https://github.com/rvben/verg"
 categories = ["command-line-utilities"]
-keywords = ["infrastructure", "configuration-management", "devops"]
+keywords = ["infrastructure", "config-management", "devops", "ansible", "iac"]
 readme = "README.md"
 
 [[bin]]
