@@ -38,9 +38,10 @@ agent-linux:
 		       cargo build --release --target x86_64-unknown-linux-musl --bin verg-agent 2>&1 | tail -3"
 	@echo "Built: target/x86_64-unknown-linux-musl/release/verg-agent"
 
-# Build and cache the agent binary for auto-download path
+# Build and cache the agent binary for auto-download path (versioned)
 agent-cache: agent-linux
-	mkdir -p "$(HOME)/Library/Application Support/verg/agents"
+	$(eval VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/'))
+	mkdir -p "$(HOME)/Library/Application Support/verg/agents/$(VERSION)"
 	cp target/x86_64-unknown-linux-musl/release/verg-agent \
-		"$(HOME)/Library/Application Support/verg/agents/verg-agent-x86_64-unknown-linux-gnu"
-	@echo "Cached at ~/Library/Application Support/verg/agents/verg-agent-x86_64-unknown-linux-gnu"
+		"$(HOME)/Library/Application Support/verg/agents/$(VERSION)/verg-agent-x86_64-unknown-linux-gnu"
+	@echo "Cached at ~/Library/Application Support/verg/agents/$(VERSION)/verg-agent-x86_64-unknown-linux-gnu"

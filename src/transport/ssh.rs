@@ -77,36 +77,25 @@ impl SshTransport {
 
     async fn agent_binary_for_arch(&self, arch: &str) -> Result<PathBuf, Error> {
         let target = Self::arch_to_target(arch)?;
+        let version_dir = self.agent_dir.join(&self.version);
+        let cached = version_dir.join(format!("verg-agent-{target}"));
 
-        // Check local cache first
-        let cached = self.agent_dir.join(format!("verg-agent-{target}"));
+        // Check versioned cache first
         if cached.exists() {
             return Ok(cached);
         }
 
-        // Also check legacy names
-        for name in [
-            format!("verg-agent-{arch}-linux"),
-            format!("verg-agent-{arch}"),
-            "verg-agent".to_string(),
-        ] {
-            let path = self.agent_dir.join(&name);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
         // Download from GitHub releases
-        eprintln!("Downloading verg-agent for {target}...");
+        eprintln!("Downloading verg-agent v{} for {target}...", self.version);
         let url = format!(
             "https://github.com/rvben/verg/releases/download/v{}/verg-agent-{target}",
             self.version
         );
 
-        std::fs::create_dir_all(&self.agent_dir).map_err(|e| {
+        std::fs::create_dir_all(&version_dir).map_err(|e| {
             Error::Config(format!(
                 "failed to create agents dir {}: {e}",
-                self.agent_dir.display()
+                version_dir.display()
             ))
         })?;
 
