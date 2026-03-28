@@ -5,8 +5,12 @@ pub mod pkg;
 pub mod service;
 pub mod user;
 
+use std::process::Command as ProcessCommand;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -89,6 +93,37 @@ impl ResolvedResource {
     pub fn fqn(&self) -> String {
         format!("{}.{}", self.resource_type, self.name)
     }
+}
+
+pub fn execute_resource(resource: &ResolvedResource, dry_run: bool) -> ResourceResult {
+    let result = match resource.resource_type.as_str() {
+        "pkg" => pkg::execute(resource, dry_run),
+        "file" => file::execute(resource, dry_run),
+        "service" => service::execute(resource, dry_run),
+        "cmd" => cmd::execute(resource, dry_run),
+        "user" => user::execute(resource, dry_run),
+        other => Err(Error::Resource(format!("unknown resource type: {other}"))),
+    };
+
+    match result {
+        Ok(r) => r,
+        Err(e) => ResourceResult {
+            resource_type: resource.resource_type.clone(),
+            name: resource.name.clone(),
+            status: ResourceStatus::Failed,
+            diff: None,
+            from: None,
+            to: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+pub fn run_cmd(cmd: &str, args: &[&str]) -> Result<std::process::Output, Error> {
+    ProcessCommand::new(cmd)
+        .args(args)
+        .output()
+        .map_err(|e| Error::Resource(format!("failed to run {cmd}: {e}")))
 }
 
 #[cfg(test)]
