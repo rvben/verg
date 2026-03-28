@@ -65,29 +65,81 @@ impl SshTransport {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    fn agent_binary_for_arch(&self, arch: &str) -> Result<PathBuf, Error> {
-        // Try arch-specific names first, then fall back to plain verg-agent
-        let candidates = [
+    fn arch_to_target(arch: &str) -> Result<&'static str, Error> {
+        match arch {
+            "x86_64" => Ok("x86_64-unknown-linux-gnu"),
+            "aarch64" => Ok("aarch64-unknown-linux-gnu"),
+            other => Err(Error::Config(format!(
+                "unsupported target architecture: {other}"
+            ))),
+        }
+    }
+
+    async fn agent_binary_for_arch(&self, arch: &str) -> Result<PathBuf, Error> {
+        let target = Self::arch_to_target(arch)?;
+
+        // Check local cache first
+        let cached = self.agent_dir.join(format!("verg-agent-{target}"));
+        if cached.exists() {
+            return Ok(cached);
+        }
+
+        // Also check legacy names
+        for name in [
             format!("verg-agent-{arch}-linux"),
             format!("verg-agent-{arch}"),
             "verg-agent".to_string(),
-        ];
-
-        for name in &candidates {
-            let path = self.agent_dir.join(name);
+        ] {
+            let path = self.agent_dir.join(&name);
             if path.exists() {
                 return Ok(path);
             }
         }
 
-        Err(Error::Config(format!(
-            "no agent binary found for architecture '{arch}' in {}\n\
-             Expected one of: {}\n\
-             Hint: build with `cargo build --release --target <target> --bin verg-agent` \
-             and place in the agents directory",
-            self.agent_dir.display(),
-            candidates.join(", ")
-        )))
+        // Download from GitHub releases
+        eprintln!("Downloading verg-agent for {target}...");
+        let url = format!(
+            "https://github.com/rvben/verg/releases/download/v{}/verg-agent-{target}",
+            self.version
+        );
+
+        std::fs::create_dir_all(&self.agent_dir).map_err(|e| {
+            Error::Config(format!(
+                "failed to create agents dir {}: {e}",
+                self.agent_dir.display()
+            ))
+        })?;
+
+        let output = Command::new("curl")
+            .args(["-fSL", "--progress-bar", "-o"])
+            .arg(&cached)
+            .arg(&url)
+            .output()
+            .await
+            .map_err(|e| Error::Connection(format!("curl: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Clean up partial download
+            let _ = std::fs::remove_file(&cached);
+            return Err(Error::Config(format!(
+                "failed to download agent binary from {url}\n{stderr}\n\
+                 Hint: the release v{} may not exist yet. \
+                 Build locally with `cargo build --release --target {target} --bin verg-agent`",
+                self.version
+            )));
+        }
+
+        // Make executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| Error::Config(format!("failed to chmod agent binary: {e}")))?;
+        }
+
+        eprintln!("Cached at {}", cached.display());
+        Ok(cached)
     }
 
     async fn check_version(
@@ -204,7 +256,7 @@ impl SshTransport {
         let has_version = self.check_version(user, address, port).await?;
         if !has_version {
             let arch = self.detect_arch(user, address, port).await?;
-            let agent_binary = self.agent_binary_for_arch(&arch)?;
+            let agent_binary = self.agent_binary_for_arch(&arch).await?;
             self.push_binary(user, address, port, &agent_binary).await?;
         }
 
