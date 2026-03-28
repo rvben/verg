@@ -4,7 +4,11 @@ use verg::error::Error;
 use verg::output::OutputConfig;
 
 #[derive(Parser)]
-#[command(name = "verg", version, about = "Desired-state infrastructure convergence engine")]
+#[command(
+    name = "verg",
+    version,
+    about = "Desired-state infrastructure convergence engine"
+)]
 struct Cli {
     #[arg(long, global = true)]
     json: bool,
