@@ -95,6 +95,7 @@ mod tests {
             name: "web1".into(),
             address: "192.168.1.10".into(),
             user: "root".into(),
+            port: None,
             groups: vec!["web".into(), "prod".into()],
             vars: {
                 let mut v = HashMap::new();

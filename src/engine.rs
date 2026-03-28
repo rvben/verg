@@ -64,7 +64,7 @@ impl Engine {
                 let _permit = sem.acquire().await.unwrap();
                 let bundle = Bundle::build(&host, &state_files)?;
                 let result = transport
-                    .execute(&host.user, &host.address, &bundle, dry_run)
+                    .execute(&host.user, &host.address, host.port, &bundle, dry_run)
                     .await?;
                 Ok::<RunSummary, Error>(result.summary)
             });

@@ -11,6 +11,8 @@ pub struct HostDef {
     #[serde(default = "default_user")]
     pub user: String,
     #[serde(default)]
+    pub port: Option<u16>,
+    #[serde(default)]
     pub groups: Vec<String>,
     #[serde(default)]
     pub vars: HashMap<String, toml::Value>,
@@ -86,6 +88,40 @@ data_dir = "/var/lib/postgres"
 
         let hosts = load_hosts(f.path()).unwrap();
         assert_eq!(hosts["db1"].vars["port"], toml::Value::Integer(5432));
+    }
+
+    #[test]
+    fn parse_hosts_with_port() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(
+            f,
+            r#"
+[hosts.web1]
+address = "192.168.1.10"
+port = 2222
+groups = ["web"]
+"#
+        )
+        .unwrap();
+
+        let hosts = load_hosts(f.path()).unwrap();
+        assert_eq!(hosts["web1"].port, Some(2222));
+    }
+
+    #[test]
+    fn port_defaults_to_none() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(
+            f,
+            r#"
+[hosts.web1]
+address = "192.168.1.10"
+"#
+        )
+        .unwrap();
+
+        let hosts = load_hosts(f.path()).unwrap();
+        assert_eq!(hosts["web1"].port, None);
     }
 
     #[test]

@@ -36,9 +36,17 @@ impl SshTransport {
         args
     }
 
-    async fn check_version(&self, user: &str, address: &str) -> Result<bool, Error> {
+    async fn check_version(
+        &self,
+        user: &str,
+        address: &str,
+        port: Option<u16>,
+    ) -> Result<bool, Error> {
         let target = format!("{user}@{address}");
         let mut args = self.ssh_base_args();
+        if let Some(p) = port {
+            args.extend(["-p".into(), p.to_string()]);
+        }
         args.extend(["-o".into(), "ConnectTimeout=10".into(), target]);
         args.push(format!("cat {VERSION_PATH} 2>/dev/null"));
 
@@ -52,11 +60,14 @@ impl SshTransport {
         Ok(remote_version == self.version)
     }
 
-    async fn push_binary(&self, user: &str, address: &str) -> Result<(), Error> {
+    async fn push_binary(&self, user: &str, address: &str, port: Option<u16>) -> Result<(), Error> {
         let target = format!("{user}@{address}");
 
         // Create directories
         let mut args = self.ssh_base_args();
+        if let Some(p) = port {
+            args.extend(["-p".into(), p.to_string()]);
+        }
         args.extend([
             target.clone(),
             "mkdir -p /usr/local/bin /usr/local/share/verg".into(),
@@ -76,6 +87,9 @@ impl SshTransport {
 
         // Copy binary
         let mut scp_args = self.ssh_base_args();
+        if let Some(p) = port {
+            scp_args.extend(["-P".into(), p.to_string()]);
+        }
         scp_args.push(self.agent_binary.to_string_lossy().into_owned());
         scp_args.push(format!("{target}:{AGENT_PATH}"));
         let output = Command::new("scp")
@@ -93,6 +107,9 @@ impl SshTransport {
 
         // Set permissions and write version
         let mut args = self.ssh_base_args();
+        if let Some(p) = port {
+            args.extend(["-p".into(), p.to_string()]);
+        }
         args.extend([
             target,
             format!(
@@ -120,12 +137,13 @@ impl SshTransport {
         &self,
         user: &str,
         address: &str,
+        port: Option<u16>,
         bundle: &Bundle,
         dry_run: bool,
     ) -> Result<ExecResult, Error> {
-        let has_version = self.check_version(user, address).await?;
+        let has_version = self.check_version(user, address, port).await?;
         if !has_version {
-            self.push_binary(user, address).await?;
+            self.push_binary(user, address, port).await?;
         }
 
         let target = format!("{user}@{address}");
@@ -137,6 +155,9 @@ impl SshTransport {
         }
 
         let mut args = self.ssh_base_args();
+        if let Some(p) = port {
+            args.extend(["-p".into(), p.to_string()]);
+        }
         args.extend([target, cmd_str]);
 
         let mut child = Command::new("ssh")
