@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/rvben/verg"
 categories = ["command-line-utilities"]
 keywords = ["infrastructure", "configuration-management", "devops"]
+readme = "README.md"
 
 [[bin]]
 name = "verg"
