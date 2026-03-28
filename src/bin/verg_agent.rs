@@ -66,19 +66,29 @@ fn main() {
 
     // Restart notified services
     for svc in &services_to_restart {
+        let (restart_type, restart_cmd) = if let Some(project_dir) = svc.strip_prefix("docker:") {
+            let compose_file = format!("{project_dir}/docker-compose.yml");
+            (
+                "docker_compose",
+                format!("docker compose -f {compose_file} restart"),
+            )
+        } else {
+            ("service", format!("systemctl restart {svc}"))
+        };
+
         if dry_run {
             results.push(resources::ResourceResult {
-                resource_type: "service".into(),
+                resource_type: restart_type.into(),
                 name: format!("{svc} (restart)"),
                 status: ResourceStatus::Changed,
-                diff: Some(format!("would restart {svc}")),
+                diff: Some(format!("would run: {restart_cmd}")),
                 from: None,
                 to: None,
                 error: None,
             });
         } else {
-            let output = std::process::Command::new("systemctl")
-                .args(["restart", svc])
+            let output = std::process::Command::new("sh")
+                .args(["-c", &restart_cmd])
                 .output();
             match output {
                 Ok(o) if o.status.success() => {
