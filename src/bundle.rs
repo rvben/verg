@@ -13,6 +13,8 @@ use crate::state::vars;
 pub struct Bundle {
     pub host: String,
     pub resources: Vec<ResolvedResource>,
+    #[serde(default)]
+    pub facts: HashMap<String, String>,
 }
 
 impl Bundle {
@@ -35,9 +37,14 @@ impl Bundle {
                 let mut props = HashMap::new();
                 let mut after = Vec::new();
                 let mut notify = Vec::new();
+                let mut when = None;
 
                 for (key, value) in &decl.props {
-                    if key == "after" {
+                    if key == "when" {
+                        if let toml::Value::String(s) = value {
+                            when = Some(s.clone());
+                        }
+                    } else if key == "after" {
                         if let toml::Value::Array(arr) = value {
                             for item in arr {
                                 if let toml::Value::String(s) = item {
@@ -119,13 +126,25 @@ impl Bundle {
                     props,
                     after,
                     notify,
+                    when,
                 });
+            }
+        }
+
+        // Extract fact.* and group.* vars into the facts map for when evaluation
+        let mut facts = HashMap::new();
+        for (k, v) in &host.vars {
+            if (k.starts_with("fact.") || k.starts_with("group."))
+                && let toml::Value::String(s) = v
+            {
+                facts.insert(k.clone(), s.clone());
             }
         }
 
         Ok(Bundle {
             host: host.name.clone(),
             resources,
+            facts,
         })
     }
 

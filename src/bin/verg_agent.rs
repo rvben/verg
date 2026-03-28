@@ -36,6 +36,22 @@ fn main() {
 
     for layer in &layers {
         for resource in layer {
+            // Evaluate `when` condition
+            if let Some(when_expr) = &resource.when
+                && !resources::when::evaluate(when_expr, &bundle.facts)
+            {
+                results.push(resources::ResourceResult {
+                    resource_type: resource.resource_type.clone(),
+                    name: resource.name.clone(),
+                    status: ResourceStatus::Skipped,
+                    diff: None,
+                    from: None,
+                    to: None,
+                    error: Some(format!("when: {when_expr}")),
+                });
+                continue;
+            }
+
             let should_skip = resource.after.iter().any(|dep| failed_fqns.contains(dep));
             if should_skip {
                 results.push(resources::ResourceResult {

@@ -8,6 +8,7 @@ pub mod file;
 pub mod pkg;
 pub mod service;
 pub mod user;
+pub mod when;
 
 use std::process::Command as ProcessCommand;
 
@@ -93,6 +94,8 @@ pub struct ResolvedResource {
     pub after: Vec<String>,
     #[serde(default)]
     pub notify: Vec<String>,
+    #[serde(default)]
+    pub when: Option<String>,
 }
 
 impl ResolvedResource {
@@ -186,6 +189,7 @@ mod tests {
             props: HashMap::new(),
             after: vec![],
             notify: vec![],
+            when: None,
         };
         assert_eq!(r.fqn(), "pkg.nginx");
     }

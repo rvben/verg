@@ -84,6 +84,7 @@ mod tests {
             props: HashMap::new(),
             after: after.iter().map(|s| s.to_string()).collect(),
             notify: vec![],
+            when: None,
         }
     }
 

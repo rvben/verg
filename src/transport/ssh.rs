@@ -36,33 +36,49 @@ impl SshTransport {
         args
     }
 
-    async fn detect_arch(
+    /// Gather basic system facts from the target in a single SSH command.
+    /// Returns a HashMap with keys like "fact.arch", "fact.hostname", etc.
+    pub async fn gather_facts(
         &self,
         user: &str,
         address: &str,
         port: Option<u16>,
-    ) -> Result<String, Error> {
+    ) -> Result<std::collections::HashMap<String, String>, Error> {
         let target = format!("{user}@{address}");
         let mut args = self.ssh_base_args();
         if let Some(p) = port {
             args.extend(["-p".into(), p.to_string()]);
         }
         args.extend(["-o".into(), "ConnectTimeout=10".into(), target]);
-        args.push("uname -m".into());
+        args.push(
+            "echo \"arch=$(uname -m)\" && \
+             echo \"hostname=$(hostname)\" && \
+             echo \"os=$(. /etc/os-release 2>/dev/null && echo $ID)\" && \
+             echo \"os_release=$(. /etc/os-release 2>/dev/null && echo $VERSION_CODENAME)\" && \
+             echo \"os_version=$(. /etc/os-release 2>/dev/null && echo $VERSION_ID)\""
+                .into(),
+        );
 
         let output = Command::new("ssh")
             .args(&args)
             .output()
             .await
-            .map_err(|e| Error::Connection(format!("ssh uname: {e}")))?;
+            .map_err(|e| Error::Connection(format!("ssh facts: {e}")))?;
 
         if !output.status.success() {
             return Err(Error::Connection(
-                "failed to detect target architecture".into(),
+                "failed to gather facts from target".into(),
             ));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        let mut facts = std::collections::HashMap::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            if let Some((key, val)) = line.split_once('=') {
+                facts.insert(format!("fact.{key}"), val.to_string());
+            }
+        }
+
+        Ok(facts)
     }
 
     fn arch_to_target(arch: &str) -> Result<&'static str, Error> {
@@ -252,9 +268,14 @@ impl SshTransport {
         bundle: &Bundle,
         dry_run: bool,
     ) -> Result<ExecResult, Error> {
+        let facts = self.gather_facts(user, address, port).await?;
+        let arch = facts
+            .get("fact.arch")
+            .cloned()
+            .unwrap_or_else(|| "x86_64".into());
+
         let has_version = self.check_version(user, address, port).await?;
         if !has_version {
-            let arch = self.detect_arch(user, address, port).await?;
             let agent_binary = self.agent_binary_for_arch(&arch).await?;
             self.push_binary(user, address, port, &agent_binary).await?;
         }

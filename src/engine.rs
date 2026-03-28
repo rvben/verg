@@ -65,6 +65,25 @@ impl Engine {
                 let _permit = sem.acquire().await.unwrap();
                 let host_name = host.name.clone();
                 let result = async {
+                    // Gather facts from target and inject into host vars
+                    let facts = transport
+                        .gather_facts(&host.user, &host.address, host.port)
+                        .await?;
+
+                    let mut host = host;
+                    // Inject facts as variables (fact.arch, fact.hostname, etc.)
+                    for (k, v) in &facts {
+                        host.vars
+                            .entry(k.clone())
+                            .or_insert_with(|| toml::Value::String(v.clone()));
+                    }
+                    // Inject group membership as variables (group.docker = "true")
+                    for group in &host.groups {
+                        host.vars
+                            .entry(format!("group.{group}"))
+                            .or_insert_with(|| toml::Value::String("true".into()));
+                    }
+
                     let bundle = Bundle::build(&host, &state_files, &base_dir)?;
                     let result = transport
                         .execute(&host.user, &host.address, host.port, &bundle, dry_run)
