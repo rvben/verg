@@ -89,6 +89,30 @@ impl Bundle {
                     props.insert("content".into(), toml::Value::String(content));
                 }
 
+                // Resolve `compose_file` for docker_compose resources
+                if let Some(toml::Value::String(compose_path)) = props.remove("compose_file") {
+                    let full_path = base_dir.join(&compose_path);
+                    let content = std::fs::read_to_string(&full_path).map_err(|e| {
+                        Error::Config(format!(
+                            "failed to read compose file {}: {e}",
+                            full_path.display()
+                        ))
+                    })?;
+                    props.insert("content".into(), toml::Value::String(content));
+                }
+
+                // Resolve `env_file` for docker_compose resources
+                if let Some(toml::Value::String(env_path)) = props.remove("env_file") {
+                    let full_path = base_dir.join(&env_path);
+                    let content = std::fs::read_to_string(&full_path).map_err(|e| {
+                        Error::Config(format!(
+                            "failed to read env file {}: {e}",
+                            full_path.display()
+                        ))
+                    })?;
+                    props.insert("env_content".into(), toml::Value::String(content));
+                }
+
                 resources.push(ResolvedResource {
                     resource_type: decl.resource_type,
                     name: decl.name,

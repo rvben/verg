@@ -25,6 +25,19 @@ fn resource_schemas() -> Value {
             },
             "required": ["name", "url", "gpg_key"],
         },
+        "download": {
+            "description": "Download a file from a URL, optionally extract archives",
+            "properties": {
+                "url": {"type": "string", "description": "URL to download from"},
+                "dest": {"type": "string", "description": "Destination path on target"},
+                "mode": {"type": "string", "description": "File permissions (octal)"},
+                "owner": {"type": "string", "description": "File owner"},
+                "extract": {"type": "boolean", "description": "Extract archive (zip, tar.gz)", "default": false},
+                "checksum": {"type": "string", "description": "SHA256 checksum to verify download"},
+                "state": {"type": "string", "enum": ["present", "absent"], "default": "present"},
+            },
+            "required": ["url", "dest"],
+        },
         "pkg": {
             "description": "Manage system packages (apt, dnf, pacman — auto-detected)",
             "properties": {
@@ -54,6 +67,17 @@ fn resource_schemas() -> Value {
                 "enabled": {"type": "boolean", "description": "Whether the service starts on boot"},
             },
             "required": ["name"],
+        },
+        "docker_compose": {
+            "description": "Manage Docker Compose services",
+            "properties": {
+                "project_dir": {"type": "string", "description": "Directory on target for compose project"},
+                "compose_file": {"type": "string", "description": "Path to compose file (relative to verg dir, resolved at build time)"},
+                "env_file": {"type": "string", "description": "Path to .env file (relative to verg dir, resolved at build time)"},
+                "state": {"type": "string", "enum": ["up", "down"], "default": "up"},
+                "pull": {"type": "boolean", "description": "Pull images before starting", "default": true},
+            },
+            "required": ["project_dir"],
         },
         "cmd": {
             "description": "Run a command (requires idempotency guard)",
