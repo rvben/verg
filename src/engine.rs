@@ -6,7 +6,7 @@ use crate::bundle::Bundle;
 use crate::error::Error;
 use crate::inventory::Inventory;
 use crate::inventory::selector;
-use crate::resources::RunSummary;
+use crate::resources::{ResourceResult, ResourceStatus, RunSummary};
 use crate::state;
 use crate::transport::ssh::SshTransport;
 
@@ -63,20 +63,52 @@ impl Engine {
             let base_dir = base_dir.to_path_buf();
             join_set.spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                let bundle = Bundle::build(&host, &state_files, &base_dir)?;
-                let result = transport
-                    .execute(&host.user, &host.address, host.port, &bundle, dry_run)
-                    .await?;
-                Ok::<RunSummary, Error>(result.summary)
+                let host_name = host.name.clone();
+                let result = async {
+                    let bundle = Bundle::build(&host, &state_files, &base_dir)?;
+                    let result = transport
+                        .execute(&host.user, &host.address, host.port, &bundle, dry_run)
+                        .await?;
+                    Ok::<RunSummary, Error>(result.summary)
+                }
+                .await;
+
+                match result {
+                    Ok(summary) => summary,
+                    Err(e) => RunSummary::from_results(
+                        &host_name,
+                        vec![ResourceResult {
+                            resource_type: "connection".into(),
+                            name: host_name.clone(),
+                            status: ResourceStatus::Failed,
+                            diff: None,
+                            from: None,
+                            to: None,
+                            error: Some(e.to_string()),
+                        }],
+                    ),
+                }
             });
         }
 
         let mut summaries = Vec::new();
         while let Some(result) = join_set.join_next().await {
             match result {
-                Ok(Ok(summary)) => summaries.push(summary),
-                Ok(Err(e)) => return Err(e),
-                Err(e) => return Err(Error::Other(format!("task join error: {e}"))),
+                Ok(summary) => summaries.push(summary),
+                Err(e) => {
+                    summaries.push(RunSummary::from_results(
+                        "unknown",
+                        vec![ResourceResult {
+                            resource_type: "connection".into(),
+                            name: "task".into(),
+                            status: ResourceStatus::Failed,
+                            diff: None,
+                            from: None,
+                            to: None,
+                            error: Some(format!("task join error: {e}")),
+                        }],
+                    ));
+                }
             }
         }
 
