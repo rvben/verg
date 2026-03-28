@@ -1,3 +1,4 @@
+pub mod apt_repo;
 pub mod cmd;
 pub mod dag;
 pub mod file;
@@ -99,6 +100,7 @@ impl ResolvedResource {
 
 pub fn execute_resource(resource: &ResolvedResource, dry_run: bool) -> ResourceResult {
     let result = match resource.resource_type.as_str() {
+        "apt_repo" => apt_repo::execute(resource, dry_run),
         "pkg" => pkg::execute(resource, dry_run),
         "file" => file::execute(resource, dry_run),
         "service" => service::execute(resource, dry_run),

@@ -12,6 +12,19 @@ pub fn run() {
 
 fn resource_schemas() -> Value {
     json!({
+        "apt_repo": {
+            "description": "Manage APT repositories with GPG keys",
+            "properties": {
+                "name": {"type": "string", "description": "Repository identifier (used for filenames)"},
+                "url": {"type": "string", "description": "Base URL of the repository"},
+                "gpg_key": {"type": "string", "description": "URL to the GPG signing key"},
+                "suite": {"type": "string", "description": "Distribution suite (default: auto-detected)"},
+                "component": {"type": "string", "description": "Repository component (default: 'stable')"},
+                "arch": {"type": "string", "description": "Architecture (default: 'amd64')"},
+                "state": {"type": "string", "enum": ["present", "absent"], "default": "present"},
+            },
+            "required": ["name", "url", "gpg_key"],
+        },
         "pkg": {
             "description": "Manage system packages (apt, dnf, pacman — auto-detected)",
             "properties": {
