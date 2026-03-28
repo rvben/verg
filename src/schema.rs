@@ -65,7 +65,6 @@ fn resource_schemas() -> Value {
                 "path": {"type": "string", "description": "Absolute path on target"},
                 "content": {"type": "string", "description": "Desired file content (inline)"},
                 "source": {"type": "string", "description": "Source file path (relative to verg dir)"},
-                "template": {"type": "string", "description": "Template file with {{ var }} interpolation"},
                 "mode": {"type": "string", "description": "File permissions (octal, e.g. '0644')"},
                 "owner": {"type": "string", "description": "File owner"},
             },

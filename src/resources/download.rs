@@ -44,33 +44,92 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         .unwrap_or(false);
 
     let checksum = resource.props.get("checksum").and_then(|v| v.as_str());
+    let mode_str = resource.props.get("mode").and_then(|v| v.as_str());
+    let owner = resource.props.get("owner").and_then(|v| v.as_str());
 
-    // If dest already exists, skip (idempotent based on file presence)
+    let mut changes = Vec::new();
+
     if Path::new(dest).exists() {
-        return Ok(ResourceResult {
-            resource_type: "download".into(),
-            name: resource.name.clone(),
-            status: ResourceStatus::Ok,
-            diff: None,
-            from: None,
-            to: None,
-            error: None,
-        });
+        // Verify checksum if specified
+        if let Some(expected) = checksum {
+            let output = run_cmd("sha256sum", &[dest])?;
+            let actual = String::from_utf8_lossy(&output.stdout);
+            let actual_hash = actual.split_whitespace().next().unwrap_or("");
+            if actual_hash != expected {
+                changes.push("checksum mismatch (re-download)".to_string());
+                if !dry_run {
+                    std::fs::remove_file(dest).map_err(|e| {
+                        Error::Resource(format!("failed to remove stale {dest}: {e}"))
+                    })?;
+                }
+            }
+        }
+
+        // Verify mode if specified
+        if let Some(mode_str) = mode_str {
+            let desired_mode = u32::from_str_radix(mode_str, 8)
+                .map_err(|_| Error::Resource(format!("invalid mode: {mode_str}")))?;
+            if let Ok(meta) = std::fs::metadata(dest) {
+                use std::os::unix::fs::PermissionsExt;
+                let current_mode = meta.permissions().mode() & 0o7777;
+                if current_mode != desired_mode {
+                    changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
+                    if !dry_run {
+                        run_cmd("chmod", &[mode_str, dest])?;
+                    }
+                }
+            }
+        }
+
+        // Verify owner if specified
+        if let Some(owner) = owner {
+            let ls_output = run_cmd("ls", &["-ld", dest])?;
+            let ls_line = String::from_utf8_lossy(&ls_output.stdout);
+            let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
+            if current_owner != owner {
+                changes.push(format!("owner {current_owner} → {owner}"));
+                if !dry_run {
+                    run_cmd("chown", &[owner, dest])?;
+                }
+            }
+        }
+
+        // If only metadata drifted, no re-download needed
+        if changes.is_empty() || !changes.iter().any(|c| c.contains("re-download")) {
+            return Ok(ResourceResult {
+                resource_type: "download".into(),
+                name: resource.name.clone(),
+                status: if changes.is_empty() {
+                    ResourceStatus::Ok
+                } else {
+                    ResourceStatus::Changed
+                },
+                diff: if changes.is_empty() {
+                    None
+                } else {
+                    Some(changes.join(", "))
+                },
+                from: None,
+                to: None,
+                error: None,
+            });
+        }
     }
 
     if dry_run {
+        if changes.is_empty() {
+            changes.push(format!("would download {url} → {dest}"));
+        }
         return Ok(ResourceResult {
             resource_type: "download".into(),
             name: resource.name.clone(),
             status: ResourceStatus::Changed,
-            diff: Some(format!("would download {url} → {dest}")),
+            diff: Some(changes.join(", ")),
             from: None,
             to: None,
             error: None,
         });
     }
-
-    let mut changes = Vec::new();
 
     // Create parent directory
     if let Some(parent) = Path::new(dest).parent() {
@@ -85,12 +144,12 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     }
 
     // Set mode
-    if let Some(mode_str) = resource.props.get("mode").and_then(|v| v.as_str()) {
+    if let Some(mode_str) = mode_str {
         run_cmd("chmod", &[mode_str, dest])?;
     }
 
     // Set owner
-    if let Some(owner) = resource.props.get("owner").and_then(|v| v.as_str()) {
+    if let Some(owner) = owner {
         run_cmd("chown", &[owner, dest])?;
     }
 
