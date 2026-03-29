@@ -5,6 +5,13 @@ pub fn run() {
         "tool": "verg",
         "version": env!("CARGO_PKG_VERSION"),
         "description": "Desired-state infrastructure convergence engine",
+        "common_properties": {
+            "after": {"type": "array", "items": {"type": "string"}, "description": "Resources that must complete before this one (FQN format: type.name)"},
+            "notify": {"type": "array", "items": {"type": "string"}, "description": "Targets to notify on change. FQN for handler resources, or shorthand: restart:svc, reload:svc, daemon-reload, docker-restart:/path, docker-up:/path"},
+            "when": {"type": "string", "description": "Conditional expression (e.g. fact.arch == 'x86_64', group.docker, !group.monitoring)"},
+            "handler": {"type": "boolean", "description": "If true, resource only executes when notified (guards are bypassed)", "default": false},
+            "template": {"type": "boolean", "description": "If true, source/compose_file content is rendered through the Jinja2 template engine", "default": false},
+        },
         "resource_types": resource_schemas(),
     });
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
@@ -91,15 +98,16 @@ fn resource_schemas() -> Value {
             "required": ["project_dir"],
         },
         "cmd": {
-            "description": "Run a command (requires idempotency guard)",
+            "description": "Run a command (requires idempotency guard, or register)",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
                 "creates": {"type": "string", "description": "Skip if this path exists"},
                 "unless": {"type": "string", "description": "Skip if this command succeeds"},
                 "onlyif": {"type": "string", "description": "Only run if this command succeeds"},
+                "register": {"type": "string", "description": "Capture stdout into a named register for use in downstream resources via {{ register.NAME }}"},
             },
             "required": ["command"],
-            "required_one_of_guards": ["creates", "unless", "onlyif"],
+            "required_one_of_guards": ["creates", "unless", "onlyif", "register"],
         },
         "user": {
             "description": "Manage system users",
@@ -128,6 +136,31 @@ mod tests {
         assert!(obj.contains_key("service"));
         assert!(obj.contains_key("cmd"));
         assert!(obj.contains_key("user"));
+    }
+
+    #[test]
+    fn schema_has_common_properties() {
+        let schema = json!({
+            "tool": "verg",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "Desired-state infrastructure convergence engine",
+            "common_properties": {
+                "after": {"type": "array", "items": {"type": "string"}},
+                "notify": {"type": "array", "items": {"type": "string"}},
+                "when": {"type": "string"},
+                "handler": {"type": "boolean", "default": false},
+                "template": {"type": "boolean", "default": false},
+            },
+            "resource_types": resource_schemas(),
+        });
+        let obj = schema.as_object().unwrap();
+        assert!(obj.contains_key("common_properties"));
+        let common = obj["common_properties"].as_object().unwrap();
+        assert!(common.contains_key("after"));
+        assert!(common.contains_key("notify"));
+        assert!(common.contains_key("when"));
+        assert!(common.contains_key("handler"));
+        assert!(common.contains_key("template"));
     }
 
     #[test]
