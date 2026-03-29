@@ -19,7 +19,7 @@ use crate::error::Error;
 
 /// Sentinel prefix/suffix for register references preserved through template rendering.
 pub const REGISTER_SENTINEL: &str = "__VERG_REG_";
-pub const REGISTER_SENTINEL_END: &str = "__";
+pub const REGISTER_SENTINEL_END: &str = "__VERG_END__";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
