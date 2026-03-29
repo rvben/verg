@@ -2,53 +2,79 @@ use std::collections::HashMap;
 
 use crate::error::Error;
 
-pub fn interpolate(template: &str, vars: &HashMap<String, toml::Value>) -> Result<String, Error> {
-    let mut result = String::with_capacity(template.len());
-    let mut chars = template.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        if c == '{' && chars.peek() == Some(&'{') {
-            chars.next();
-            let mut var_name = String::new();
-            loop {
-                match chars.next() {
-                    Some('}') if chars.peek() == Some(&'}') => {
-                        chars.next();
-                        break;
-                    }
-                    Some(c) => var_name.push(c),
-                    None => return Err(Error::Parse("unclosed {{ in template".into())),
-                }
-            }
-            let var_name = var_name.trim();
-            let value = vars
-                .get(var_name)
-                .ok_or_else(|| Error::Parse(format!("undefined variable: {var_name}")))?;
-            match value {
-                toml::Value::String(s) => {
-                    // Resolve $env.VAR_NAME references
-                    if let Some(env_var) = s.strip_prefix("$env.") {
-                        let env_val = std::env::var(env_var).map_err(|_| {
-                            Error::Parse(format!(
-                                "environment variable '{env_var}' not set (referenced by {var_name})"
-                            ))
-                        })?;
-                        result.push_str(&env_val);
-                    } else {
-                        result.push_str(s);
-                    }
-                }
-                toml::Value::Integer(i) => result.push_str(&i.to_string()),
-                toml::Value::Float(f) => result.push_str(&f.to_string()),
-                toml::Value::Boolean(b) => result.push_str(&b.to_string()),
-                other => result.push_str(&other.to_string()),
-            }
-        } else {
-            result.push(c);
-        }
+/// Convert `toml::Value` vars to `serde_json::Value`, resolving any `$env.VAR`
+/// references in string values to the actual environment variable value.
+fn resolve_env_vars(
+    vars: &HashMap<String, toml::Value>,
+) -> Result<HashMap<String, serde_json::Value>, Error> {
+    let mut out = HashMap::new();
+    for (key, value) in vars {
+        let json_val = toml_to_json(value)?;
+        out.insert(key.clone(), json_val);
     }
+    Ok(out)
+}
 
-    Ok(result)
+fn toml_to_json(value: &toml::Value) -> Result<serde_json::Value, Error> {
+    match value {
+        toml::Value::String(s) => {
+            if let Some(env_var) = s.strip_prefix("$env.") {
+                let env_val = std::env::var(env_var).map_err(|_| {
+                    Error::Parse(format!("environment variable '{env_var}' not set"))
+                })?;
+                Ok(serde_json::Value::String(env_val))
+            } else {
+                Ok(serde_json::Value::String(s.clone()))
+            }
+        }
+        toml::Value::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
+        toml::Value::Float(f) => Ok(serde_json::json!(*f)),
+        toml::Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
+        toml::Value::Array(arr) => {
+            let items: Result<Vec<_>, _> = arr.iter().map(toml_to_json).collect();
+            Ok(serde_json::Value::Array(items?))
+        }
+        toml::Value::Table(tbl) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in tbl {
+                map.insert(k.clone(), toml_to_json(v)?);
+            }
+            Ok(serde_json::Value::Object(map))
+        }
+        toml::Value::Datetime(dt) => Ok(serde_json::Value::String(dt.to_string())),
+    }
+}
+
+/// Render a template string using minijinja with the given variables.
+///
+/// Variables are converted from `toml::Value` to `serde_json::Value` first,
+/// with any `$env.VAR` string values resolved from the environment.
+/// A custom `env("VAR_NAME")` function is available in templates for direct
+/// environment variable access.
+pub fn render(template: &str, vars: &HashMap<String, toml::Value>) -> Result<String, Error> {
+    let context = resolve_env_vars(vars)?;
+
+    let mut env = minijinja::Environment::new();
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+
+    env.add_function("env", |name: String| -> Result<String, minijinja::Error> {
+        std::env::var(&name).map_err(|_| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("environment variable '{name}' not set"),
+            )
+        })
+    });
+
+    env.add_template("tpl", template)
+        .map_err(|e| Error::Parse(format!("template error: {e}")))?;
+
+    let tpl = env
+        .get_template("tpl")
+        .map_err(|e| Error::Parse(format!("template error: {e}")))?;
+
+    tpl.render(&context)
+        .map_err(|e| Error::Parse(format!("template error: {e}")))
 }
 
 #[cfg(test)]
@@ -65,13 +91,13 @@ mod tests {
     #[test]
     fn simple_substitution() {
         let v = vars(&[("name", toml::Value::String("nginx".into()))]);
-        assert_eq!(interpolate("pkg: {{ name }}", &v).unwrap(), "pkg: nginx");
+        assert_eq!(render("pkg: {{ name }}", &v).unwrap(), "pkg: nginx");
     }
 
     #[test]
     fn integer_substitution() {
         let v = vars(&[("port", toml::Value::Integer(8080))]);
-        assert_eq!(interpolate("listen {{ port }}", &v).unwrap(), "listen 8080");
+        assert_eq!(render("listen {{ port }}", &v).unwrap(), "listen 8080");
     }
 
     #[test]
@@ -81,7 +107,7 @@ mod tests {
             ("port", toml::Value::Integer(3000)),
         ]);
         assert_eq!(
-            interpolate("{{ host }}:{{ port }}", &v).unwrap(),
+            render("{{ host }}:{{ port }}", &v).unwrap(),
             "localhost:3000"
         );
     }
@@ -90,7 +116,7 @@ mod tests {
     fn no_vars_passthrough() {
         let v = HashMap::new();
         assert_eq!(
-            interpolate("no variables here", &v).unwrap(),
+            render("no variables here", &v).unwrap(),
             "no variables here"
         );
     }
@@ -98,51 +124,107 @@ mod tests {
     #[test]
     fn undefined_var_errors() {
         let v = HashMap::new();
-        let result = interpolate("{{ missing }}", &v);
-        assert!(matches!(result, Err(Error::Parse(_))));
+        let result = render("{{ missing }}", &v);
+        assert!(result.is_err());
     }
 
     #[test]
     fn unclosed_brace_errors() {
         let v = HashMap::new();
-        let result = interpolate("{{ unclosed", &v);
-        assert!(matches!(result, Err(Error::Parse(_))));
+        let result = render("{{ unclosed", &v);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn env_var_resolution() {
-        // SAFETY: test is single-threaded, no other threads reading this var
+    fn env_var_resolution_in_vars() {
         unsafe { std::env::set_var("VERG_TEST_SECRET", "s3cret") };
         let v = vars(&[(
             "api_key",
             toml::Value::String("$env.VERG_TEST_SECRET".into()),
         )]);
-        assert_eq!(interpolate("key={{ api_key }}", &v).unwrap(), "key=s3cret");
+        assert_eq!(render("key={{ api_key }}", &v).unwrap(), "key=s3cret");
         unsafe { std::env::remove_var("VERG_TEST_SECRET") };
     }
 
     #[test]
-    fn env_var_missing_errors() {
-        let v = vars(&[(
-            "missing",
-            toml::Value::String("$env.VERG_NONEXISTENT_VAR_12345".into()),
-        )]);
-        let result = interpolate("{{ missing }}", &v);
-        assert!(matches!(result, Err(Error::Parse(msg)) if msg.contains("not set")));
-    }
-
-    #[test]
-    fn env_prefix_only_in_string_values() {
-        // A regular string that happens to contain "$env." is not resolved
-        let v = vars(&[("note", toml::Value::String("use $env.FOO".into()))]);
-        // This is NOT a $env reference because it doesn't start with $env.
-        assert_eq!(interpolate("{{ note }}", &v).unwrap(), "use $env.FOO");
+    fn env_function_in_template() {
+        unsafe { std::env::set_var("VERG_TEST_DIRECT", "direct_val") };
+        let v = HashMap::new();
+        assert_eq!(
+            render("val={{ env('VERG_TEST_DIRECT') }}", &v).unwrap(),
+            "val=direct_val"
+        );
+        unsafe { std::env::remove_var("VERG_TEST_DIRECT") };
     }
 
     #[test]
     fn whitespace_tolerance() {
         let v = vars(&[("x", toml::Value::String("val".into()))]);
-        assert_eq!(interpolate("{{x}}", &v).unwrap(), "val");
-        assert_eq!(interpolate("{{  x  }}", &v).unwrap(), "val");
+        assert_eq!(render("{{x}}", &v).unwrap(), "val");
+        assert_eq!(render("{{  x  }}", &v).unwrap(), "val");
+    }
+
+    #[test]
+    fn for_loop() {
+        let v = vars(&[(
+            "packages",
+            toml::Value::Array(vec![
+                toml::Value::String("nginx".into()),
+                toml::Value::String("curl".into()),
+            ]),
+        )]);
+        assert_eq!(
+            render("{% for p in packages %}{{ p }} {% endfor %}", &v).unwrap(),
+            "nginx curl "
+        );
+    }
+
+    #[test]
+    fn if_conditional() {
+        let v = vars(&[("enabled", toml::Value::Boolean(true))]);
+        assert_eq!(
+            render("{% if enabled %}yes{% else %}no{% endif %}", &v).unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn default_filter() {
+        let v = HashMap::new();
+        assert_eq!(
+            render("{{ missing | default('fallback') }}", &v).unwrap(),
+            "fallback"
+        );
+    }
+
+    #[test]
+    fn join_filter() {
+        let v = vars(&[(
+            "items",
+            toml::Value::Array(vec![
+                toml::Value::String("a".into()),
+                toml::Value::String("b".into()),
+                toml::Value::String("c".into()),
+            ]),
+        )]);
+        assert_eq!(render("{{ items | join(', ') }}", &v).unwrap(), "a, b, c");
+    }
+
+    #[test]
+    fn nested_object_access() {
+        let mut grafana = toml::map::Map::new();
+        grafana.insert("port".into(), toml::Value::Integer(3000));
+        grafana.insert("host".into(), toml::Value::String("grafana.local".into()));
+        let v = vars(&[("grafana", toml::Value::Table(grafana))]);
+        assert_eq!(render("{{ grafana.port }}", &v).unwrap(), "3000");
+    }
+
+    #[test]
+    fn raw_block_passthrough() {
+        let v = HashMap::new();
+        assert_eq!(
+            render("{% raw %}{{ not_a_var }}{% endraw %}", &v).unwrap(),
+            "{{ not_a_var }}"
+        );
     }
 }

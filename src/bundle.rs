@@ -67,7 +67,7 @@ impl Bundle {
                     } else {
                         let interpolated = match value {
                             toml::Value::String(s) => {
-                                toml::Value::String(vars::interpolate(s, &host.vars)?)
+                                toml::Value::String(vars::render(s, &host.vars)?)
                             }
                             other => other.clone(),
                         };
@@ -78,7 +78,7 @@ impl Bundle {
                 if let Some(toml::Value::Table(var_overrides)) = props.remove("vars") {
                     for (k, v) in var_overrides {
                         if let toml::Value::String(s) = &v {
-                            let interpolated = vars::interpolate(s, &host.vars)?;
+                            let interpolated = vars::render(s, &host.vars)?;
                             props.entry(k).or_insert(toml::Value::String(interpolated));
                         }
                     }
