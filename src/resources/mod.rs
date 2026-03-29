@@ -7,6 +7,7 @@ pub mod download;
 pub mod file;
 pub mod pkg;
 pub mod service;
+pub mod sysctl;
 pub mod user;
 pub mod when;
 
@@ -127,6 +128,7 @@ pub fn execute_resource(
         "pkg" => pkg::execute(resource, dry_run),
         "file" => file::execute(resource, dry_run),
         "service" => service::execute(resource, dry_run),
+        "sysctl" => sysctl::execute(resource, dry_run),
         "cmd" => cmd::execute(resource, dry_run, notified),
         "user" => user::execute(resource, dry_run),
         other => Err(Error::Resource(format!("unknown resource type: {other}"))),

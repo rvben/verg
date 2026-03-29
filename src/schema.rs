@@ -97,6 +97,15 @@ fn resource_schemas() -> Value {
             },
             "required": ["project_dir"],
         },
+        "sysctl": {
+            "description": "Manage Linux kernel parameters",
+            "properties": {
+                "key": {"type": "string", "description": "Sysctl key (e.g. net.ipv4.ip_forward)"},
+                "value": {"type": "string", "description": "Desired value"},
+                "persist": {"type": "boolean", "description": "Write to /etc/sysctl.d/99-verg.conf for persistence across reboots", "default": false},
+            },
+            "required": ["key", "value"],
+        },
         "cmd": {
             "description": "Run a command (requires idempotency guard, or register)",
             "properties": {
@@ -136,6 +145,7 @@ mod tests {
         assert!(obj.contains_key("service"));
         assert!(obj.contains_key("cmd"));
         assert!(obj.contains_key("user"));
+        assert!(obj.contains_key("sysctl"));
     }
 
     #[test]
