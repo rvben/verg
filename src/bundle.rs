@@ -84,6 +84,11 @@ impl Bundle {
                     }
                 }
 
+                let is_template = props
+                    .remove("template")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
                 // Resolve `source` files on the control machine and inline as `content`
                 if let Some(toml::Value::String(source_path)) = props.remove("source") {
                     let full_path = base_dir.join(&source_path);
@@ -93,6 +98,16 @@ impl Bundle {
                             full_path.display()
                         ))
                     })?;
+                    let content = if is_template {
+                        vars::render(&content, &host.vars).map_err(|e| {
+                            Error::Config(format!(
+                                "{}.{}: template error in source {}: {e}",
+                                decl.resource_type, decl.name, source_path
+                            ))
+                        })?
+                    } else {
+                        content
+                    };
                     props.insert("content".into(), toml::Value::String(content));
                 }
 
@@ -105,6 +120,16 @@ impl Bundle {
                             full_path.display()
                         ))
                     })?;
+                    let content = if is_template {
+                        vars::render(&content, &host.vars).map_err(|e| {
+                            Error::Config(format!(
+                                "{}.{}: template error in compose file {}: {e}",
+                                decl.resource_type, decl.name, compose_path
+                            ))
+                        })?
+                    } else {
+                        content
+                    };
                     props.insert("content".into(), toml::Value::String(content));
                 }
 
@@ -312,5 +337,56 @@ content = "{{ undefined_var }}"
 
         let result = Bundle::build(&host, &files, Path::new("/tmp"));
         assert!(matches!(result, Err(Error::Parse(_))));
+    }
+
+    #[test]
+    fn bundle_renders_template_source_file() {
+        let host = test_host();
+        let dir = tempfile::TempDir::new().unwrap();
+        let files_dir = dir.path().join("files");
+        std::fs::create_dir(&files_dir).unwrap();
+        std::fs::write(
+            files_dir.join("test.conf.j2"),
+            "listen {{ http_port }}\nroot {{ document_root }}",
+        )
+        .unwrap();
+
+        let files = vec![parse_state(
+            r#"
+[resource.file.conf]
+path = "/etc/test.conf"
+source = "files/test.conf.j2"
+template = true
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        assert_eq!(
+            bundle.resources[0].props["content"],
+            toml::Value::String("listen 80\nroot /var/www".into())
+        );
+    }
+
+    #[test]
+    fn bundle_does_not_render_source_without_template_flag() {
+        let host = test_host();
+        let dir = tempfile::TempDir::new().unwrap();
+        let files_dir = dir.path().join("files");
+        std::fs::create_dir(&files_dir).unwrap();
+        std::fs::write(files_dir.join("raw.conf"), "{{ not_rendered }}").unwrap();
+
+        let files = vec![parse_state(
+            r#"
+[resource.file.raw]
+path = "/etc/raw.conf"
+source = "files/raw.conf"
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        assert_eq!(
+            bundle.resources[0].props["content"],
+            toml::Value::String("{{ not_rendered }}".into())
+        );
     }
 }
