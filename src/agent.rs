@@ -65,6 +65,10 @@ pub enum NotifyTarget<'a> {
 }
 
 /// Parse a notify target string into a structured enum.
+///
+/// Recognized prefixes: `restart:`, `reload:`, `daemon-reload`, `docker-restart:`,
+/// `docker-up:`, `docker:` (alias for `docker-restart:`).
+/// Bare names without a prefix are treated as `Restart` (systemctl restart).
 pub fn parse_notify_target(target: &str) -> NotifyTarget<'_> {
     if target == "daemon-reload" {
         NotifyTarget::DaemonReload
@@ -74,8 +78,14 @@ pub fn parse_notify_target(target: &str) -> NotifyTarget<'_> {
         NotifyTarget::Reload(svc)
     } else if let Some(path) = target.strip_prefix("docker-restart:") {
         NotifyTarget::DockerRestart(path)
+    } else if let Some(path) = target.strip_prefix("docker:") {
+        // Legacy alias for docker-restart:
+        NotifyTarget::DockerRestart(path)
     } else if let Some(path) = target.strip_prefix("docker-up:") {
         NotifyTarget::DockerUp(path)
+    } else if is_valid_service_name(target) {
+        // Bare service name without prefix → systemctl restart
+        NotifyTarget::Restart(target)
     } else {
         NotifyTarget::Unknown(target)
     }
@@ -243,10 +253,17 @@ mod tests {
     }
 
     #[test]
-    fn describe_notify_unknown() {
-        let (rt, desc) = describe_notify("custom-action");
-        assert_eq!(rt, "notify");
-        assert_eq!(desc, "custom-action (notify)");
+    fn describe_notify_bare_service_name() {
+        let (rt, desc) = describe_notify("nginx");
+        assert_eq!(rt, "service");
+        assert_eq!(desc, "nginx (restart)");
+    }
+
+    #[test]
+    fn describe_notify_docker_legacy_prefix() {
+        let (rt, desc) = describe_notify("docker:/opt/ntfy");
+        assert_eq!(rt, "docker_compose");
+        assert_eq!(desc, "/opt/ntfy (restart)");
     }
 
     // --- parse_notify_target ---
@@ -273,9 +290,21 @@ mod tests {
             parse_notify_target("docker-up:/srv/web"),
             NotifyTarget::DockerUp("/srv/web")
         );
+        // Bare service names → Restart
+        assert_eq!(parse_notify_target("nginx"), NotifyTarget::Restart("nginx"));
         assert_eq!(
-            parse_notify_target("something-else"),
-            NotifyTarget::Unknown("something-else")
+            parse_notify_target("node_exporter"),
+            NotifyTarget::Restart("node_exporter")
+        );
+        // Legacy docker: prefix → DockerRestart
+        assert_eq!(
+            parse_notify_target("docker:/opt/app"),
+            NotifyTarget::DockerRestart("/opt/app")
+        );
+        // Invalid service name → Unknown
+        assert_eq!(
+            parse_notify_target("svc;rm -rf /"),
+            NotifyTarget::Unknown("svc;rm -rf /")
         );
     }
 
