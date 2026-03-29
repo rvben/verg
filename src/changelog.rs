@@ -40,6 +40,7 @@ mod tests {
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             }],
         )];
 

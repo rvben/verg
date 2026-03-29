@@ -17,6 +17,10 @@ use std::collections::HashMap;
 
 use crate::error::Error;
 
+/// Sentinel prefix/suffix for register references preserved through template rendering.
+pub const REGISTER_SENTINEL: &str = "__VERG_REG_";
+pub const REGISTER_SENTINEL_END: &str = "__";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ResourceStatus {
@@ -40,6 +44,8 @@ pub struct ResourceResult {
     pub to: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +102,10 @@ pub struct ResolvedResource {
     pub notify: Vec<String>,
     #[serde(default)]
     pub when: Option<String>,
+    #[serde(default)]
+    pub handler: bool,
+    #[serde(default)]
+    pub register: Option<String>,
 }
 
 impl ResolvedResource {
@@ -128,6 +138,7 @@ pub fn execute_resource(resource: &ResolvedResource, dry_run: bool) -> ResourceR
             from: None,
             to: None,
             error: Some(e.to_string()),
+            output: None,
         },
     }
 }
@@ -154,6 +165,7 @@ mod tests {
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             },
             ResourceResult {
                 resource_type: "file".into(),
@@ -163,6 +175,7 @@ mod tests {
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             },
             ResourceResult {
                 resource_type: "service".into(),
@@ -172,6 +185,7 @@ mod tests {
                 from: None,
                 to: None,
                 error: Some("not found".into()),
+                output: None,
             },
         ];
         let summary = RunSummary::from_results("web1", results);
@@ -190,6 +204,8 @@ mod tests {
             after: vec![],
             notify: vec![],
             when: None,
+            handler: false,
+            register: None,
         };
         assert_eq!(r.fqn(), "pkg.nginx");
     }

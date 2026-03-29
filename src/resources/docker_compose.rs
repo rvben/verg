@@ -144,6 +144,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         from: None,
         to: None,
         error: None,
+        output: None,
     })
 }
 
@@ -162,6 +163,7 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -174,6 +176,7 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -193,5 +196,6 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
         from: None,
         to: None,
         error: None,
+        output: None,
     })
 }

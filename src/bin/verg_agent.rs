@@ -47,6 +47,7 @@ fn main() {
                     diff: None,
                     from: None,
                     to: None,
+                    output: None,
                     error: Some(format!("when: {when_expr}")),
                 });
                 continue;
@@ -61,6 +62,7 @@ fn main() {
                     diff: None,
                     from: None,
                     to: None,
+                    output: None,
                     error: Some("dependency failed".into()),
                 });
                 failed_fqns.insert(resource.fqn());
@@ -100,6 +102,7 @@ fn main() {
                 diff: Some(format!("would run: {restart_cmd}")),
                 from: None,
                 to: None,
+                output: None,
                 error: None,
             });
         } else {
@@ -115,6 +118,7 @@ fn main() {
                         diff: Some(format!("restarted {svc}")),
                         from: None,
                         to: None,
+                        output: None,
                         error: None,
                     });
                 }
@@ -127,6 +131,7 @@ fn main() {
                         diff: None,
                         from: None,
                         to: None,
+                        output: None,
                         error: Some(format!("restart failed: {stderr}")),
                     });
                 }
@@ -138,6 +143,7 @@ fn main() {
                         diff: None,
                         from: None,
                         to: None,
+                        output: None,
                         error: Some(format!("restart failed: {e}")),
                     });
                 }

@@ -32,6 +32,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -46,6 +47,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             });
         }
     }
@@ -61,6 +63,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             });
         }
     }
@@ -74,6 +77,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -87,6 +91,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             from: None,
             to: None,
             error: None,
+            output: None,
         })
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);

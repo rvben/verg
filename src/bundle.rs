@@ -152,6 +152,8 @@ impl Bundle {
                     after,
                     notify,
                     when,
+                    handler: false,
+                    register: None,
                 });
             }
         }

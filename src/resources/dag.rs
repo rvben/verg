@@ -85,6 +85,8 @@ mod tests {
             after: after.iter().map(|s| s.to_string()).collect(),
             notify: vec![],
             when: None,
+            handler: false,
+            register: None,
         }
     }
 

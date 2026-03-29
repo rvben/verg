@@ -120,6 +120,7 @@ impl Engine {
                             diff: None,
                             from: None,
                             to: None,
+                            output: None,
                             error: Some(e.to_string()),
                         }],
                     ),
@@ -141,6 +142,7 @@ impl Engine {
                             diff: None,
                             from: None,
                             to: None,
+                            output: None,
                             error: Some(format!("task join error: {e}")),
                         }],
                     ));

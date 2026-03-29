@@ -39,6 +39,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             });
         }
         if dry_run {
@@ -50,6 +51,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             });
         }
         std::fs::remove_dir_all(target)
@@ -62,6 +64,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -186,6 +189,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         from: None,
         to: None,
         error: None,
+        output: None,
     })
 }
 

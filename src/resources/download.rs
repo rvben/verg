@@ -112,6 +112,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 from: None,
                 to: None,
                 error: None,
+                output: None,
             });
         }
     }
@@ -128,6 +129,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -161,6 +163,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         from: None,
         to: None,
         error: None,
+        output: None,
     })
 }
 
@@ -303,6 +306,7 @@ fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -315,6 +319,7 @@ fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error
             from: None,
             to: None,
             error: None,
+            output: None,
         });
     }
 
@@ -329,5 +334,6 @@ fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error
         from: None,
         to: None,
         error: None,
+        output: None,
     })
 }
