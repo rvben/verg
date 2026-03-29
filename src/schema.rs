@@ -113,6 +113,7 @@ fn resource_schemas() -> Value {
                 "creates": {"type": "string", "description": "Skip if this path exists"},
                 "unless": {"type": "string", "description": "Skip if this command succeeds"},
                 "onlyif": {"type": "string", "description": "Only run if this command succeeds"},
+                "stdin": {"type": "string", "description": "Data to pipe to the command's stdin. Treated as sensitive — never echoed in diffs or output. Supports template variables (e.g. {{ smb_password }})."},
                 "register": {"type": "string", "description": "Capture stdout into a named register for use in downstream resources via {{ register.NAME }}"},
             },
             "required": ["command"],
@@ -128,6 +129,28 @@ fn resource_schemas() -> Value {
                 "groups": {"type": "string", "description": "Supplementary groups (comma-separated)"},
             },
             "required": ["name"],
+        },
+        "cron": {
+            "description": "Manage cron jobs via /etc/cron.d/<name> files",
+            "properties": {
+                "name": {"type": "string", "description": "Cron file name (alphanumeric, hyphens, underscores only)"},
+                "schedule": {"type": "string", "description": "Cron schedule expression (5 fields, single-job form)"},
+                "command": {"type": "string", "description": "Command to run (single-job form)"},
+                "user": {"type": "string", "description": "User to run the job as (default: root)"},
+                "jobs": {"type": "array", "description": "Multiple jobs (multi-job form; mutually exclusive with schedule/command)", "items": {
+                    "type": "object",
+                    "properties": {
+                        "schedule": {"type": "string"},
+                        "command": {"type": "string"},
+                        "user": {"type": "string"},
+                    }
+                }},
+                "mailto": {"type": "string", "description": "MAILTO value (default: empty string to suppress mail)"},
+                "env": {"type": "object", "description": "Additional environment variables to set in the cron file"},
+                "state": {"type": "string", "enum": ["present", "absent"], "default": "present"},
+            },
+            "required": ["name"],
+            "note": "Use single-job form (schedule + command) or multi-job form (jobs array), not both",
         },
     })
 }
@@ -146,6 +169,7 @@ mod tests {
         assert!(obj.contains_key("cmd"));
         assert!(obj.contains_key("user"));
         assert!(obj.contains_key("sysctl"));
+        assert!(obj.contains_key("cron"));
     }
 
     #[test]

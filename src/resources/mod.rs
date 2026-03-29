@@ -1,5 +1,6 @@
 pub mod apt_repo;
 pub mod cmd;
+pub mod cron;
 pub mod dag;
 pub mod directory;
 pub mod docker_compose;
@@ -130,6 +131,7 @@ pub fn execute_resource(
         "service" => service::execute(resource, dry_run),
         "sysctl" => sysctl::execute(resource, dry_run),
         "cmd" => cmd::execute(resource, dry_run, notified),
+        "cron" => cron::execute(resource, dry_run),
         "user" => user::execute(resource, dry_run),
         other => Err(Error::Resource(format!("unknown resource type: {other}"))),
     };
@@ -154,6 +156,46 @@ pub fn run_cmd(cmd: &str, args: &[&str]) -> Result<std::process::Output, Error> 
         .args(args)
         .output()
         .map_err(|e| Error::Resource(format!("failed to run {cmd}: {e}")))
+}
+
+/// Run a command, piping `stdin_data` to its stdin.
+///
+/// Spawns a thread to write stdin concurrently with collecting stdout/stderr
+/// to prevent deadlock when the process's output buffers fill before all
+/// stdin bytes are consumed.
+///
+/// The caller is responsible for not including stdin content in any user-visible
+/// output — treat it as sensitive.
+pub fn run_cmd_with_stdin(
+    cmd: &str,
+    args: &[&str],
+    stdin_data: &[u8],
+) -> Result<std::process::Output, Error> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = ProcessCommand::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Resource(format!("failed to spawn {cmd}: {e}")))?;
+
+    let data = stdin_data.to_vec();
+    let mut stdin_pipe = child.stdin.take().expect("stdin is piped");
+    let write_thread = std::thread::spawn(move || stdin_pipe.write_all(&data));
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| Error::Resource(format!("failed to wait for {cmd}: {e}")))?;
+
+    write_thread
+        .join()
+        .map_err(|_| Error::Resource("stdin write thread panicked".into()))?
+        .map_err(|e| Error::Resource(format!("failed to write stdin: {e}")))?;
+
+    Ok(output)
 }
 
 #[cfg(test)]
