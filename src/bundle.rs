@@ -219,6 +219,18 @@ impl Bundle {
                             full_path.display()
                         ))
                     })?;
+                    let content = if is_template {
+                        let (protected, _) = protect_register_refs(&content);
+                        let rendered = vars::render(&protected, &host.vars).map_err(|e| {
+                            Error::Config(format!(
+                                "{}.{}: template error in env file {}: {e}",
+                                decl.resource_type, decl.name, env_path
+                            ))
+                        })?;
+                        restore_register_refs(&rendered)
+                    } else {
+                        content
+                    };
                     props.insert("env_content".into(), toml::Value::String(content));
                 }
 
@@ -619,5 +631,64 @@ register = "host_ip"
         let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
         assert_eq!(bundle.resources[0].register, Some("host_ip".into()));
         assert!(!bundle.resources[0].props.contains_key("register"));
+    }
+
+    #[test]
+    fn bundle_renders_template_env_file() {
+        let host = test_host();
+        let dir = tempfile::TempDir::new().unwrap();
+        let files_dir = dir.path().join("files");
+        std::fs::create_dir(&files_dir).unwrap();
+        std::fs::write(
+            files_dir.join("compose.yml"),
+            "version: '3'\nservices:\n  web:\n    image: nginx",
+        )
+        .unwrap();
+        std::fs::write(
+            files_dir.join("app.env"),
+            "PORT={{ http_port }}\nROOT={{ document_root }}",
+        )
+        .unwrap();
+
+        let files = vec![parse_state(
+            r#"
+[resource.docker_compose.app]
+project_dir = "/opt/app"
+compose_file = "files/compose.yml"
+env_file = "files/app.env"
+template = true
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        let env_content = bundle.resources[0].props["env_content"].as_str().unwrap();
+        assert_eq!(env_content, "PORT=80\nROOT=/var/www");
+    }
+
+    #[test]
+    fn bundle_does_not_render_env_file_without_template_flag() {
+        let host = test_host();
+        let dir = tempfile::TempDir::new().unwrap();
+        let files_dir = dir.path().join("files");
+        std::fs::create_dir(&files_dir).unwrap();
+        std::fs::write(
+            files_dir.join("compose.yml"),
+            "version: '3'\nservices:\n  web:\n    image: nginx",
+        )
+        .unwrap();
+        std::fs::write(files_dir.join("app.env"), "PORT={{ not_rendered }}").unwrap();
+
+        let files = vec![parse_state(
+            r#"
+[resource.docker_compose.app]
+project_dir = "/opt/app"
+compose_file = "files/compose.yml"
+env_file = "files/app.env"
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        let env_content = bundle.resources[0].props["env_content"].as_str().unwrap();
+        assert_eq!(env_content, "PORT={{ not_rendered }}");
     }
 }
