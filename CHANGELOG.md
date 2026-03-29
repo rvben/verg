@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+## [0.6.0](https://github.com/rvben/verg/compare/v0.5.0...v0.6.0) - 2026-03-29
+
+### Added
+
+- **`cron` resource type**: manages `/etc/cron.d/<name>` files declaratively. Supports single-job form (`schedule` + `command`) and multi-job form (`jobs` array). Validates name (path-safe characters only), schedule (5-field with range checks), and command (no newlines). Enforces `0644` permissions. Whole-file ownership is cleaner and more reliable than per-line cron management.
+
+- **`stdin` on `cmd` resource**: pipe sensitive data to a command's stdin via `stdin = "{{ password }}\n{{ password }}\n"`. Content is treated as sensitive — never echoed in diffs, logs, or error messages. Uses a write thread to prevent deadlock when command output is large. Enables non-interactive use of tools like `smbpasswd`.
+
+- **Inventory data in templates**: `inventory.hosts` (name → `{address, groups}`) and `inventory.groups` (group → `[names]`) are now available in all minijinja templates. Enables config generation driven by live inventory — e.g. Prometheus scrape targets that automatically include new hosts. Only `address` and `groups` are exposed; vars and credentials are never leaked.
+
+
 ## [0.5.0](https://github.com/rvben/verg/compare/v0.4.0...v0.5.0) - 2026-03-29
 
 ### Added
