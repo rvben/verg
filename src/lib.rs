@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod bundle;
 pub mod changelog;
 pub mod commands;

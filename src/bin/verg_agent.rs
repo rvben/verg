@@ -2,44 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::process::Command as ProcessCommand;
 
+use verg::agent::{
+    NotifyTarget, describe_notify, has_unresolved_registers, interpolate_registers,
+    is_valid_service_name, parse_notify_target, validate_docker_path,
+};
 use verg::bundle::Bundle;
 use verg::resources::dag;
-use verg::resources::{
-    self, REGISTER_SENTINEL, REGISTER_SENTINEL_END, ResolvedResource, ResourceResult,
-    ResourceStatus, RunSummary,
-};
-
-/// Replace register sentinel tokens in resource string props with actual values.
-fn interpolate_registers(
-    resource: &ResolvedResource,
-    registers: &HashMap<String, String>,
-) -> ResolvedResource {
-    let mut res = resource.clone();
-    for value in res.props.values_mut() {
-        if let toml::Value::String(s) = value {
-            let mut result = s.clone();
-            loop {
-                let Some(start) = result.find(REGISTER_SENTINEL) else {
-                    break;
-                };
-                let after_prefix = start + REGISTER_SENTINEL.len();
-                let Some(end) = result[after_prefix..].find(REGISTER_SENTINEL_END) else {
-                    break;
-                };
-                let name = &result[after_prefix..after_prefix + end];
-                let sentinel = format!("{REGISTER_SENTINEL}{name}{REGISTER_SENTINEL_END}");
-                if let Some(val) = registers.get(name) {
-                    result = result.replacen(&sentinel, val, 1);
-                } else {
-                    // Leave sentinel in place if register not yet available
-                    break;
-                }
-            }
-            *s = result;
-        }
-    }
-    res
-}
+use verg::resources::{self, ResolvedResource, ResourceResult, ResourceStatus, RunSummary};
 
 /// Execute a handler resource, bypassing guard requirements.
 fn execute_handler(resource: &ResolvedResource, dry_run: bool) -> ResourceResult {
@@ -48,56 +17,27 @@ fn execute_handler(resource: &ResolvedResource, dry_run: bool) -> ResourceResult
     result
 }
 
-/// Validate that a service name contains only safe characters.
-fn is_valid_service_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '@')
-}
-
-/// Return (resource_type, description) for a shorthand notify target.
-fn describe_notify(target: &str) -> (&str, String) {
-    if target == "daemon-reload" {
-        ("service", "systemd daemon-reload".into())
-    } else if let Some(svc) = target.strip_prefix("restart:") {
-        ("service", format!("{svc} (restart)"))
-    } else if let Some(svc) = target.strip_prefix("reload:") {
-        ("service", format!("{svc} (reload)"))
-    } else if let Some(path) = target.strip_prefix("docker-restart:") {
-        ("docker_compose", format!("{path} (restart)"))
-    } else if let Some(path) = target.strip_prefix("docker-up:") {
-        ("docker_compose", format!("{path} (up)"))
-    } else {
-        ("notify", format!("{target} (notify)"))
-    }
-}
-
 /// Run the actual command for a shorthand notify target. Uses Command::new with args (no sh -c).
 fn run_notify_command(target: &str) -> Result<std::process::Output, std::io::Error> {
-    if target == "daemon-reload" {
-        ProcessCommand::new("systemctl")
+    match parse_notify_target(target) {
+        NotifyTarget::DaemonReload => ProcessCommand::new("systemctl")
             .args(["daemon-reload"])
-            .output()
-    } else if let Some(svc) = target.strip_prefix("restart:") {
-        ProcessCommand::new("systemctl")
+            .output(),
+        NotifyTarget::Restart(svc) => ProcessCommand::new("systemctl")
             .args(["restart", svc])
-            .output()
-    } else if let Some(svc) = target.strip_prefix("reload:") {
-        ProcessCommand::new("systemctl")
+            .output(),
+        NotifyTarget::Reload(svc) => ProcessCommand::new("systemctl")
             .args(["reload", svc])
-            .output()
-    } else if let Some(path) = target.strip_prefix("docker-restart:") {
-        ProcessCommand::new("docker")
+            .output(),
+        NotifyTarget::DockerRestart(path) => ProcessCommand::new("docker")
             .args([
                 "compose",
                 "-f",
                 &format!("{path}/docker-compose.yml"),
                 "restart",
             ])
-            .output()
-    } else if let Some(path) = target.strip_prefix("docker-up:") {
-        ProcessCommand::new("docker")
+            .output(),
+        NotifyTarget::DockerUp(path) => ProcessCommand::new("docker")
             .args([
                 "compose",
                 "-f",
@@ -105,12 +45,11 @@ fn run_notify_command(target: &str) -> Result<std::process::Output, std::io::Err
                 "up",
                 "-d",
             ])
-            .output()
-    } else {
-        Err(std::io::Error::new(
+            .output(),
+        NotifyTarget::Unknown(_) => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("unknown notify target: {target}"),
-        ))
+        )),
     }
 }
 
@@ -134,6 +73,25 @@ fn execute_notify_shorthand(target: &str, dry_run: bool) -> ResourceResult {
             output: None,
             error: Some(format!("invalid service name: {svc}")),
         };
+    }
+
+    // Validate docker paths are absolute
+    match parse_notify_target(target) {
+        NotifyTarget::DockerRestart(path) | NotifyTarget::DockerUp(path) => {
+            if let Err(e) = validate_docker_path(path) {
+                return ResourceResult {
+                    resource_type: resource_type.into(),
+                    name: description,
+                    status: ResourceStatus::Failed,
+                    diff: None,
+                    from: None,
+                    to: None,
+                    output: None,
+                    error: Some(e),
+                };
+            }
+        }
+        _ => {}
     }
 
     if dry_run {
@@ -272,6 +230,22 @@ fn main() {
 
             // Interpolate register sentinel tokens
             let interpolated = interpolate_registers(resource, &registers);
+
+            // In dry-run mode, flag resources with unresolved register values
+            if dry_run && has_unresolved_registers(&interpolated) {
+                results.push(ResourceResult {
+                    resource_type: resource.resource_type.clone(),
+                    name: resource.name.clone(),
+                    status: ResourceStatus::Changed,
+                    diff: Some("register values not available in dry-run".into()),
+                    from: None,
+                    to: None,
+                    output: None,
+                    error: None,
+                });
+                continue;
+            }
+
             let result = resources::execute_resource(&interpolated, dry_run, false);
 
             // Capture register output
