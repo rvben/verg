@@ -45,18 +45,11 @@ fn toml_to_json(value: &toml::Value) -> Result<serde_json::Value, Error> {
     }
 }
 
-/// Render a template string using minijinja with the given variables.
-///
-/// Variables are converted from `toml::Value` to `serde_json::Value` first,
-/// with any `$env.VAR` string values resolved from the environment.
-/// A custom `env("VAR_NAME")` function is available in templates for direct
-/// environment variable access.
-pub fn render(template: &str, vars: &HashMap<String, toml::Value>) -> Result<String, Error> {
-    let context = resolve_env_vars(vars)?;
-
+/// Create a reusable minijinja environment with strict undefined behavior
+/// and a custom `env("VAR_NAME")` function for environment variable access.
+pub fn create_env() -> minijinja::Environment<'static> {
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-
     env.add_function("env", |name: String| -> Result<String, minijinja::Error> {
         std::env::var(&name).map_err(|_| {
             minijinja::Error::new(
@@ -65,7 +58,19 @@ pub fn render(template: &str, vars: &HashMap<String, toml::Value>) -> Result<Str
             )
         })
     });
+    env
+}
 
+/// Render a template string using the given minijinja environment and variables.
+///
+/// Variables are converted from `toml::Value` to `serde_json::Value` first,
+/// with any `$env.VAR` string values resolved from the environment.
+pub fn render(
+    env: &minijinja::Environment,
+    template: &str,
+    vars: &HashMap<String, toml::Value>,
+) -> Result<String, Error> {
+    let context = resolve_env_vars(vars)?;
     env.render_str(template, &context)
         .map_err(|e| Error::Parse(format!("template error: {e}")))
 }
@@ -83,68 +88,79 @@ mod tests {
 
     #[test]
     fn simple_substitution() {
+        let env = create_env();
         let v = vars(&[("name", toml::Value::String("nginx".into()))]);
-        assert_eq!(render("pkg: {{ name }}", &v).unwrap(), "pkg: nginx");
+        assert_eq!(render(&env, "pkg: {{ name }}", &v).unwrap(), "pkg: nginx");
     }
 
     #[test]
     fn integer_substitution() {
+        let env = create_env();
         let v = vars(&[("port", toml::Value::Integer(8080))]);
-        assert_eq!(render("listen {{ port }}", &v).unwrap(), "listen 8080");
+        assert_eq!(
+            render(&env, "listen {{ port }}", &v).unwrap(),
+            "listen 8080"
+        );
     }
 
     #[test]
     fn multiple_vars() {
+        let env = create_env();
         let v = vars(&[
             ("host", toml::Value::String("localhost".into())),
             ("port", toml::Value::Integer(3000)),
         ]);
         assert_eq!(
-            render("{{ host }}:{{ port }}", &v).unwrap(),
+            render(&env, "{{ host }}:{{ port }}", &v).unwrap(),
             "localhost:3000"
         );
     }
 
     #[test]
     fn no_vars_passthrough() {
+        let env = create_env();
         let v = HashMap::new();
         assert_eq!(
-            render("no variables here", &v).unwrap(),
+            render(&env, "no variables here", &v).unwrap(),
             "no variables here"
         );
     }
 
     #[test]
     fn undefined_var_errors() {
+        let env = create_env();
         let v = HashMap::new();
-        let result = render("{{ missing }}", &v);
+        let result = render(&env, "{{ missing }}", &v);
         assert!(result.is_err());
     }
 
     #[test]
     fn unclosed_brace_errors() {
+        let env = create_env();
         let v = HashMap::new();
-        let result = render("{{ unclosed", &v);
+        let result = render(&env, "{{ unclosed", &v);
         assert!(result.is_err());
     }
 
     #[test]
     fn env_var_resolution_in_vars() {
+        let env = create_env();
         unsafe { std::env::set_var("VERG_TEST_SECRET", "s3cret") };
         let v = vars(&[(
             "api_key",
             toml::Value::String("$env.VERG_TEST_SECRET".into()),
         )]);
-        assert_eq!(render("key={{ api_key }}", &v).unwrap(), "key=s3cret");
+        assert_eq!(render(&env, "key={{ api_key }}", &v).unwrap(), "key=s3cret");
         unsafe { std::env::remove_var("VERG_TEST_SECRET") };
     }
 
     #[test]
     fn env_function_in_template() {
+        let env = create_env();
         unsafe { std::env::set_var("VERG_TEST_DIRECT", "direct_val") };
         let v = HashMap::new();
         assert_eq!(
-            render("val={{ env('VERG_TEST_DIRECT') }}", &v).unwrap(),
+            render(&env, "val={{ env('VERG_TEST_DIRECT') }}", &v).unwrap(),
             "val=direct_val"
         );
         unsafe { std::env::remove_var("VERG_TEST_DIRECT") };
@@ -152,13 +168,15 @@ mod tests {
 
     #[test]
     fn whitespace_tolerance() {
+        let env = create_env();
         let v = vars(&[("x", toml::Value::String("val".into()))]);
-        assert_eq!(render("{{x}}", &v).unwrap(), "val");
-        assert_eq!(render("{{  x  }}", &v).unwrap(), "val");
+        assert_eq!(render(&env, "{{x}}", &v).unwrap(), "val");
+        assert_eq!(render(&env, "{{  x  }}", &v).unwrap(), "val");
     }
 
     #[test]
     fn for_loop() {
+        let env = create_env();
         let v = vars(&[(
             "packages",
             toml::Value::Array(vec![
@@ -167,31 +185,34 @@ mod tests {
             ]),
         )]);
         assert_eq!(
-            render("{% for p in packages %}{{ p }} {% endfor %}", &v).unwrap(),
+            render(&env, "{% for p in packages %}{{ p }} {% endfor %}", &v).unwrap(),
             "nginx curl "
         );
     }
 
     #[test]
     fn if_conditional() {
+        let env = create_env();
         let v = vars(&[("enabled", toml::Value::Boolean(true))]);
         assert_eq!(
-            render("{% if enabled %}yes{% else %}no{% endif %}", &v).unwrap(),
+            render(&env, "{% if enabled %}yes{% else %}no{% endif %}", &v).unwrap(),
             "yes"
         );
     }
 
     #[test]
     fn default_filter() {
+        let env = create_env();
         let v = HashMap::new();
         assert_eq!(
-            render("{{ missing | default('fallback') }}", &v).unwrap(),
+            render(&env, "{{ missing | default('fallback') }}", &v).unwrap(),
             "fallback"
         );
     }
 
     #[test]
     fn join_filter() {
+        let env = create_env();
         let v = vars(&[(
             "items",
             toml::Value::Array(vec![
@@ -200,40 +221,47 @@ mod tests {
                 toml::Value::String("c".into()),
             ]),
         )]);
-        assert_eq!(render("{{ items | join(', ') }}", &v).unwrap(), "a, b, c");
+        assert_eq!(
+            render(&env, "{{ items | join(', ') }}", &v).unwrap(),
+            "a, b, c"
+        );
     }
 
     #[test]
     fn nested_object_access() {
+        let env = create_env();
         let mut grafana = toml::map::Map::new();
         grafana.insert("port".into(), toml::Value::Integer(3000));
         grafana.insert("host".into(), toml::Value::String("grafana.local".into()));
         let v = vars(&[("grafana", toml::Value::Table(grafana))]);
-        assert_eq!(render("{{ grafana.port }}", &v).unwrap(), "3000");
+        assert_eq!(render(&env, "{{ grafana.port }}", &v).unwrap(), "3000");
     }
 
     #[test]
     fn env_prefix_embedded_not_resolved() {
+        let env = create_env();
         let v = vars(&[("note", toml::Value::String("use $env.FOO".into()))]);
-        assert_eq!(render("{{ note }}", &v).unwrap(), "use $env.FOO");
+        assert_eq!(render(&env, "{{ note }}", &v).unwrap(), "use $env.FOO");
     }
 
     #[test]
     fn env_var_missing_in_vars_errors() {
+        let env = create_env();
         let v = vars(&[(
             "x",
             toml::Value::String("$env.VERG_NONEXISTENT_12345".into()),
         )]);
-        let result = render("{{ x }}", &v);
+        let result = render(&env, "{{ x }}", &v);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not set"));
     }
 
     #[test]
     fn raw_block_passthrough() {
+        let env = create_env();
         let v = HashMap::new();
         assert_eq!(
-            render("{% raw %}{{ not_a_var }}{% endraw %}", &v).unwrap(),
+            render(&env, "{% raw %}{{ not_a_var }}{% endraw %}", &v).unwrap(),
             "{{ not_a_var }}"
         );
     }

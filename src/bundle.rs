@@ -82,6 +82,7 @@ impl Bundle {
     /// Build a bundle for a specific host.
     /// `base_dir` is the verg project directory (used to resolve `source` file paths).
     pub fn build(host: &Host, state_files: &[StateFile], base_dir: &Path) -> Result<Self, Error> {
+        let env = vars::create_env();
         let mut resources = Vec::new();
 
         for sf in state_files {
@@ -139,7 +140,7 @@ impl Bundle {
                         let interpolated = match value {
                             toml::Value::String(s) => {
                                 let (protected, _) = protect_register_refs(s);
-                                let rendered = vars::render(&protected, &host.vars)?;
+                                let rendered = vars::render(&env, &protected, &host.vars)?;
                                 toml::Value::String(restore_register_refs(&rendered))
                             }
                             other => other.clone(),
@@ -151,7 +152,7 @@ impl Bundle {
                 if let Some(toml::Value::Table(var_overrides)) = props.remove("vars") {
                     for (k, v) in var_overrides {
                         if let toml::Value::String(s) = &v {
-                            let interpolated = vars::render(s, &host.vars)?;
+                            let interpolated = vars::render(&env, s, &host.vars)?;
                             props.entry(k).or_insert(toml::Value::String(interpolated));
                         }
                     }
@@ -173,7 +174,7 @@ impl Bundle {
                     })?;
                     let content = if is_template {
                         let (protected, _) = protect_register_refs(&content);
-                        let rendered = vars::render(&protected, &host.vars).map_err(|e| {
+                        let rendered = vars::render(&env, &protected, &host.vars).map_err(|e| {
                             Error::Config(format!(
                                 "{}.{}: template error in source {}: {e}",
                                 decl.resource_type, decl.name, source_path
@@ -197,7 +198,7 @@ impl Bundle {
                     })?;
                     let content = if is_template {
                         let (protected, _) = protect_register_refs(&content);
-                        let rendered = vars::render(&protected, &host.vars).map_err(|e| {
+                        let rendered = vars::render(&env, &protected, &host.vars).map_err(|e| {
                             Error::Config(format!(
                                 "{}.{}: template error in compose file {}: {e}",
                                 decl.resource_type, decl.name, compose_path
@@ -221,7 +222,7 @@ impl Bundle {
                     })?;
                     let content = if is_template {
                         let (protected, _) = protect_register_refs(&content);
-                        let rendered = vars::render(&protected, &host.vars).map_err(|e| {
+                        let rendered = vars::render(&env, &protected, &host.vars).map_err(|e| {
                             Error::Config(format!(
                                 "{}.{}: template error in env file {}: {e}",
                                 decl.resource_type, decl.name, env_path
