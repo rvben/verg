@@ -7,6 +7,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.5.0](https://github.com/rvben/verg/compare/v0.4.0...v0.5.0) - 2026-03-29
+
+### Added
+
+- **verg**: support bare service names and docker: legacy prefix in notify targets ([69ab1e2](https://github.com/rvben/verg/commit/69ab1e262e57bc67332870e4b47fdd74caac3cfb))
+- **verg**: update schema with register, handler, notify, and template fields ([0abfe4d](https://github.com/rvben/verg/commit/0abfe4d078098fde0dc4f61fabe258899da157ee))
+- **verg**: handler execution, register interpolation, and safe notify in agent ([487d15d](https://github.com/rvben/verg/commit/487d15d47cc887e9db891b4a2f8c1b72ee3463c4))
+- **verg**: register sentinel pass-through and dependency validation ([e359613](https://github.com/rvben/verg/commit/e3596138e714b0a963dbb7b7a2f8bc8462dee7f3))
+- **verg**: extract handler and register fields in bundle builder ([f894a58](https://github.com/rvben/verg/commit/f894a58b7e9e47dad6e4e0248211c30c4b1a5081))
+- **verg**: add register stdout capture to cmd resource ([f91bfec](https://github.com/rvben/verg/commit/f91bfece1bee6e07780a079c9fc7f6fd14400318))
+- **verg**: add handler, register, output fields to resource types ([4de1249](https://github.com/rvben/verg/commit/4de1249a551cee68bf061c4162820fbffc3f1aff))
+- **verg**: add template opt-in for source file rendering ([1205fa4](https://github.com/rvben/verg/commit/1205fa48c388bcd8c0953be0d6dc9d94e1448363))
+- **verg**: replace hand-rolled interpolator with minijinja template engine ([c3ec312](https://github.com/rvben/verg/commit/c3ec31218e0f8641040de3a11d46e2712c32b471))
+
+### Fixed
+
+- **verg**: validate docker paths, dry-run register messaging, template env_file ([b00260b](https://github.com/rvben/verg/commit/b00260b80d699b1eca9b13fb88aa1e833712a9d4))
+- **verg**: use distinctive sentinel end marker to avoid collisions ([753bf9f](https://github.com/rvben/verg/commit/753bf9fbe48b5886d2c083d1bb62157cb6ec027d))
+- **verg**: simplify render with render_str and restore missing tests ([21fdf18](https://github.com/rvben/verg/commit/21fdf18966037d4aa01136ddce824f46ced4f5c6))
+
+### Performance
+
+- **verg**: reuse minijinja environment across render calls ([5cc8602](https://github.com/rvben/verg/commit/5cc860287bbf8802bc0b678012fa6de32c0e301e))
+
 ## [0.4.0](https://github.com/rvben/verg/compare/v0.3.0...v0.4.0) - 2026-03-28
 
 ### Added
