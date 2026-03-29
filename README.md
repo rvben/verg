@@ -2,11 +2,13 @@
 
 Desired-state infrastructure convergence engine. A fast, stateless alternative to Ansible, built in Rust.
 
+> **Pre-1.0:** verg is under active development. Expect breaking changes between minor versions.
+
 ## Features
 
 - **Fast** — pushes a single static binary to targets over SSH, executes locally. No Python, no per-task SSH round-trips.
 - **Predictable** — stateless convergence. Every run checks reality and converges. No state files.
-- **Simple** — TOML declarations. No YAML, no Jinja2, no variable precedence maze.
+- **Simple** — TOML declarations with Jinja2 templating where needed. No variable precedence maze.
 - **Agent-friendly** — `--json` output, `schema` command, structured exit codes. Built for both humans and AI agents.
 
 ## Quick Start
