@@ -62,6 +62,52 @@ impl Inventory {
         Ok(Inventory { hosts })
     }
 
+    /// Build the template context value for this inventory.
+    ///
+    /// Exposes only `address` and `groups` per host — no vars or credentials.
+    /// Both `hosts` and `groups` are sorted by name for deterministic rendering.
+    pub fn to_template_context(&self) -> serde_json::Value {
+        let mut sorted_names: Vec<&String> = self.hosts.keys().collect();
+        sorted_names.sort();
+
+        let mut hosts = serde_json::Map::new();
+        // Build reverse-index: group → sorted list of host names
+        let mut group_index: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+
+        for name in &sorted_names {
+            let host = &self.hosts[*name];
+            let groups: Vec<serde_json::Value> = host
+                .groups
+                .iter()
+                .map(|g| serde_json::Value::String(g.clone()))
+                .collect();
+            hosts.insert(
+                (*name).clone(),
+                serde_json::json!({ "address": host.address, "groups": groups }),
+            );
+            for group in &host.groups {
+                group_index
+                    .entry(group.clone())
+                    .or_default()
+                    .push((*name).clone());
+            }
+        }
+
+        let mut groups = serde_json::Map::new();
+        for (group, mut names) in group_index {
+            names.sort();
+            let arr: Vec<serde_json::Value> =
+                names.into_iter().map(serde_json::Value::String).collect();
+            groups.insert(group, serde_json::Value::Array(arr));
+        }
+
+        serde_json::json!({
+            "hosts": serde_json::Value::Object(hosts),
+            "groups": serde_json::Value::Object(groups),
+        })
+    }
+
     pub fn filter(&self, selector: &selector::Selector) -> Result<Vec<&Host>, Error> {
         use selector::Selector;
         match selector {

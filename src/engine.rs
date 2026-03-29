@@ -1,11 +1,11 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use tokio::task::JoinSet;
 
 use crate::bundle::Bundle;
 use crate::error::Error;
-use crate::inventory::Inventory;
-use crate::inventory::selector;
+use crate::inventory::{Inventory, selector};
 use crate::resources::{ResourceResult, ResourceStatus, RunSummary};
 use crate::state;
 use crate::transport::ssh::SshTransport;
@@ -63,13 +63,15 @@ impl Engine {
 
         let state_dir = base_dir.join("state");
         let state_files = state::load_state_dir(&state_dir)?;
+        let inventory_ctx = Arc::new(inventory.to_template_context());
 
-        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(self.parallel));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.parallel));
         let mut join_set = JoinSet::new();
 
         for host in hosts {
             let host = host.clone();
             let state_files = state_files.clone();
+            let inventory_ctx = Arc::clone(&inventory_ctx);
             let mut transport = SshTransport::new(
                 self.transport.agent_dir.clone(),
                 self.transport.version.clone(),
@@ -101,7 +103,7 @@ impl Engine {
                             .or_insert_with(|| toml::Value::String("true".into()));
                     }
 
-                    let bundle = Bundle::build(&host, &state_files, &base_dir)?;
+                    let bundle = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
                     let result = transport
                         .execute(&host.user, &host.address, host.port, &bundle, dry_run)
                         .await?;

@@ -76,10 +76,10 @@ fn render_file(
     jinja: &minijinja::Environment,
     path: &Path,
     host_vars: &HashMap<String, toml::Value>,
+    inventory_ctx: &serde_json::Value,
     is_template: bool,
     kind: &str,
     resource_fqn: &str,
-    file_path_display: &str,
 ) -> Result<(String, Vec<String>), Error> {
     let content = std::fs::read_to_string(path).map_err(|e| {
         Error::Config(format!(
@@ -89,11 +89,13 @@ fn render_file(
     })?;
     if is_template {
         let (protected, names) = protect_register_refs(&content);
-        let rendered = vars::render(jinja, &protected, host_vars).map_err(|e| {
-            Error::Config(format!(
-                "{resource_fqn}: template error in {kind} {file_path_display}: {e}",
-            ))
-        })?;
+        let rendered = vars::render_with_globals(jinja, &protected, host_vars, inventory_ctx)
+            .map_err(|e| {
+                Error::Config(format!(
+                    "{resource_fqn}: template error in {kind} {}: {e}",
+                    path.display()
+                ))
+            })?;
         Ok((restore_register_refs(&rendered), names))
     } else {
         Ok((content, Vec::new()))
@@ -107,6 +109,7 @@ fn build_resource(
     decl: &ResourceDecl,
     host: &Host,
     base_dir: &Path,
+    inventory_ctx: &serde_json::Value,
 ) -> Result<(ResolvedResource, Vec<String>), Error> {
     let mut props = HashMap::new();
     let mut after = Vec::new();
@@ -154,7 +157,8 @@ fn build_resource(
                 toml::Value::String(s) => {
                     let (protected, names) = protect_register_refs(s);
                     register_refs.extend(names);
-                    let rendered = vars::render(jinja, &protected, &host.vars)?;
+                    let rendered =
+                        vars::render_with_globals(jinja, &protected, &host.vars, inventory_ctx)?;
                     toml::Value::String(restore_register_refs(&rendered))
                 }
                 other => other.clone(),
@@ -166,7 +170,7 @@ fn build_resource(
     if let Some(toml::Value::Table(var_overrides)) = props.remove("vars") {
         for (k, v) in var_overrides {
             if let toml::Value::String(s) = &v {
-                let interpolated = vars::render(jinja, s, &host.vars)?;
+                let interpolated = vars::render_with_globals(jinja, s, &host.vars, inventory_ctx)?;
                 props.entry(k).or_insert(toml::Value::String(interpolated));
             }
         }
@@ -185,10 +189,10 @@ fn build_resource(
             jinja,
             &base_dir.join(&source_path),
             &host.vars,
+            inventory_ctx,
             is_template,
             "source",
             &fqn,
-            &source_path,
         )?;
         register_refs.extend(names);
         props.insert("content".into(), toml::Value::String(content));
@@ -200,10 +204,10 @@ fn build_resource(
             jinja,
             &base_dir.join(&compose_path),
             &host.vars,
+            inventory_ctx,
             is_template,
             "compose",
             &fqn,
-            &compose_path,
         )?;
         register_refs.extend(names);
         props.insert("content".into(), toml::Value::String(content));
@@ -215,10 +219,10 @@ fn build_resource(
             jinja,
             &base_dir.join(&env_path),
             &host.vars,
+            inventory_ctx,
             is_template,
             "env",
             &fqn,
-            &env_path,
         )?;
         register_refs.extend(names);
         props.insert("env_content".into(), toml::Value::String(content));
@@ -307,7 +311,13 @@ pub struct Bundle {
 impl Bundle {
     /// Build a bundle for a specific host.
     /// `base_dir` is the verg project directory (used to resolve `source` file paths).
-    pub fn build(host: &Host, state_files: &[StateFile], base_dir: &Path) -> Result<Self, Error> {
+    /// `inventory_ctx` exposes `inventory.hosts` and `inventory.groups` to templates.
+    pub fn build(
+        host: &Host,
+        state_files: &[StateFile],
+        base_dir: &Path,
+        inventory_ctx: &serde_json::Value,
+    ) -> Result<Self, Error> {
         let jinja = vars::create_env();
         let mut resources = Vec::new();
         let mut register_refs_per_resource: Vec<Vec<String>> = Vec::new();
@@ -323,7 +333,8 @@ impl Bundle {
             }
 
             for decl in sf.resources()? {
-                let (resource, reg_refs) = build_resource(&jinja, &decl, host, base_dir)?;
+                let (resource, reg_refs) =
+                    build_resource(&jinja, &decl, host, base_dir, inventory_ctx)?;
                 resources.push(resource);
                 register_refs_per_resource.push(reg_refs);
             }
@@ -408,7 +419,8 @@ state = "present"
             ),
         ];
 
-        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
         assert_eq!(bundle.resources.len(), 2);
     }
 
@@ -425,7 +437,8 @@ content = "listen {{ http_port }}"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("listen 80".into())
@@ -444,7 +457,8 @@ after = ["pkg.nginx", "file.conf"]
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
         assert_eq!(bundle.resources[0].after, vec!["pkg.nginx", "file.conf"]);
         assert!(!bundle.resources[0].props.contains_key("after"));
     }
@@ -460,7 +474,8 @@ state = "present"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
         let serialized = bundle.to_toml().unwrap();
         let deserialized = Bundle::from_toml(&serialized).unwrap();
         assert_eq!(deserialized.host, "web1");
@@ -484,7 +499,7 @@ source = "files/test.conf"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("server_name web1;".into())
@@ -502,7 +517,7 @@ content = "{{ undefined_var }}"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files, Path::new("/tmp"));
+        let result = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null);
         assert!(matches!(result, Err(Error::Parse(_))));
     }
 
@@ -527,7 +542,7 @@ template = true
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("listen 80\nroot /var/www".into())
@@ -550,7 +565,7 @@ source = "files/raw.conf"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("{{ not_rendered }}".into())
@@ -569,7 +584,8 @@ unless = "true"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
         assert!(bundle.resources[0].handler);
         assert!(!bundle.resources[0].props.contains_key("handler"));
     }
@@ -590,7 +606,8 @@ after = ["cmd.get-ip"]
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
         let content = bundle.resources.iter().find(|r| r.name == "conf").unwrap();
         let val = content.props["content"].as_str().unwrap();
         assert!(
@@ -614,7 +631,7 @@ content = "ip={{ register.host_ip }}"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files, Path::new("/tmp"));
+        let result = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("after"));
@@ -631,7 +648,7 @@ content = "ip={{ register.nonexistent }}"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files, Path::new("/tmp"));
+        let result = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null);
         assert!(result.is_err());
     }
 
@@ -650,7 +667,7 @@ register = "result"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files, Path::new("/tmp"));
+        let result = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("result"));
@@ -667,7 +684,8 @@ register = "host_ip"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
         assert_eq!(bundle.resources[0].register, Some("host_ip".into()));
         assert!(!bundle.resources[0].props.contains_key("register"));
     }
@@ -699,7 +717,7 @@ template = true
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
         let env_content = bundle.resources[0].props["env_content"].as_str().unwrap();
         assert_eq!(env_content, "PORT=80\nROOT=/var/www");
     }
@@ -726,7 +744,7 @@ env_file = "files/app.env"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path()).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
         let env_content = bundle.resources[0].props["env_content"].as_str().unwrap();
         assert_eq!(env_content, "PORT={{ not_rendered }}");
     }

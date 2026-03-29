@@ -70,7 +70,25 @@ pub fn render(
     template: &str,
     vars: &HashMap<String, toml::Value>,
 ) -> Result<String, Error> {
-    let context = resolve_env_vars(vars)?;
+    render_with_globals(env, template, vars, &serde_json::Value::Null)
+}
+
+/// Render a template string, merging additional top-level globals (e.g. inventory)
+/// into the context alongside host variables. Globals are injected first so that
+/// host vars always take precedence over any same-named global key.
+pub fn render_with_globals(
+    env: &minijinja::Environment,
+    template: &str,
+    vars: &HashMap<String, toml::Value>,
+    globals: &serde_json::Value,
+) -> Result<String, Error> {
+    let mut context = resolve_env_vars(vars)?;
+    if let serde_json::Value::Object(map) = globals {
+        for (k, v) in map {
+            // Insert only if not already set — host vars take precedence
+            context.entry(k.clone()).or_insert_with(|| v.clone());
+        }
+    }
     env.render_str(template, &context)
         .map_err(|e| Error::Parse(format!("template error: {e}")))
 }
