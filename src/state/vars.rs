@@ -66,14 +66,7 @@ pub fn render(template: &str, vars: &HashMap<String, toml::Value>) -> Result<Str
         })
     });
 
-    env.add_template("tpl", template)
-        .map_err(|e| Error::Parse(format!("template error: {e}")))?;
-
-    let tpl = env
-        .get_template("tpl")
-        .map_err(|e| Error::Parse(format!("template error: {e}")))?;
-
-    tpl.render(&context)
+    env.render_str(template, &context)
         .map_err(|e| Error::Parse(format!("template error: {e}")))
 }
 
@@ -217,6 +210,23 @@ mod tests {
         grafana.insert("host".into(), toml::Value::String("grafana.local".into()));
         let v = vars(&[("grafana", toml::Value::Table(grafana))]);
         assert_eq!(render("{{ grafana.port }}", &v).unwrap(), "3000");
+    }
+
+    #[test]
+    fn env_prefix_embedded_not_resolved() {
+        let v = vars(&[("note", toml::Value::String("use $env.FOO".into()))]);
+        assert_eq!(render("{{ note }}", &v).unwrap(), "use $env.FOO");
+    }
+
+    #[test]
+    fn env_var_missing_in_vars_errors() {
+        let v = vars(&[(
+            "x",
+            toml::Value::String("$env.VERG_NONEXISTENT_12345".into()),
+        )]);
+        let result = render("{{ x }}", &v);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not set"));
     }
 
     #[test]
