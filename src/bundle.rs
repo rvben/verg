@@ -38,6 +38,8 @@ impl Bundle {
                 let mut after = Vec::new();
                 let mut notify = Vec::new();
                 let mut when = None;
+                let mut handler = false;
+                let mut register = None;
 
                 for (key, value) in &decl.props {
                     if key == "when" {
@@ -63,6 +65,14 @@ impl Bundle {
                                 }
                             }
                             _ => {}
+                        }
+                    } else if key == "handler" {
+                        if let toml::Value::Boolean(b) = value {
+                            handler = *b;
+                        }
+                    } else if key == "register" {
+                        if let toml::Value::String(s) = value {
+                            register = Some(s.clone());
                         }
                     } else {
                         let interpolated = match value {
@@ -152,8 +162,8 @@ impl Bundle {
                     after,
                     notify,
                     when,
-                    handler: false,
-                    register: None,
+                    handler,
+                    register,
                 });
             }
         }
@@ -390,5 +400,38 @@ source = "files/raw.conf"
             bundle.resources[0].props["content"],
             toml::Value::String("{{ not_rendered }}".into())
         );
+    }
+
+    #[test]
+    fn bundle_extracts_handler_flag() {
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.cmd.nginx-reload]
+command = "nginx -t && systemctl reload nginx"
+handler = true
+unless = "true"
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        assert!(bundle.resources[0].handler);
+        assert!(!bundle.resources[0].props.contains_key("handler"));
+    }
+
+    #[test]
+    fn bundle_extracts_register_field() {
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.cmd.get-ip]
+command = "hostname -I"
+register = "host_ip"
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        assert_eq!(bundle.resources[0].register, Some("host_ip".into()));
+        assert!(!bundle.resources[0].props.contains_key("register"));
     }
 }
