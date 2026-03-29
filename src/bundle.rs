@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::Error;
 use crate::inventory::Host;
 use crate::resources::{REGISTER_SENTINEL, REGISTER_SENTINEL_END, ResolvedResource};
-use crate::state::StateFile;
 use crate::state::vars;
+use crate::state::{ResourceDecl, StateFile};
 
 fn protect_register_refs(input: &str) -> (String, Vec<String>) {
     let mut result = String::with_capacity(input.len());
@@ -70,6 +70,232 @@ fn restore_register_refs(input: &str) -> String {
     result
 }
 
+/// Render a file read from disk, optionally applying template interpolation.
+/// Returns the rendered content and any register ref names found.
+fn render_file(
+    jinja: &minijinja::Environment,
+    path: &Path,
+    host_vars: &HashMap<String, toml::Value>,
+    is_template: bool,
+    kind: &str,
+    resource_fqn: &str,
+    file_path_display: &str,
+) -> Result<(String, Vec<String>), Error> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        Error::Config(format!(
+            "failed to read {kind} file {}: {e}",
+            path.display()
+        ))
+    })?;
+    if is_template {
+        let (protected, names) = protect_register_refs(&content);
+        let rendered = vars::render(jinja, &protected, host_vars).map_err(|e| {
+            Error::Config(format!(
+                "{resource_fqn}: template error in {kind} {file_path_display}: {e}",
+            ))
+        })?;
+        Ok((restore_register_refs(&rendered), names))
+    } else {
+        Ok((content, Vec::new()))
+    }
+}
+
+/// Extract resource fields from a declaration, interpolating string properties.
+/// Returns the built resource and a list of register ref names found in its props.
+fn build_resource(
+    jinja: &minijinja::Environment,
+    decl: &ResourceDecl,
+    host: &Host,
+    base_dir: &Path,
+) -> Result<(ResolvedResource, Vec<String>), Error> {
+    let mut props = HashMap::new();
+    let mut after = Vec::new();
+    let mut notify = Vec::new();
+    let mut when = None;
+    let mut handler = false;
+    let mut register = None;
+    let mut register_refs = Vec::new();
+
+    for (key, value) in &decl.props {
+        if key == "when" {
+            if let toml::Value::String(s) = value {
+                when = Some(s.clone());
+            }
+        } else if key == "after" {
+            if let toml::Value::Array(arr) = value {
+                for item in arr {
+                    if let toml::Value::String(s) = item {
+                        after.push(s.clone());
+                    }
+                }
+            }
+        } else if key == "notify" {
+            match value {
+                toml::Value::String(s) => notify.push(s.clone()),
+                toml::Value::Array(arr) => {
+                    for item in arr {
+                        if let toml::Value::String(s) = item {
+                            notify.push(s.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if key == "handler" {
+            if let toml::Value::Boolean(b) = value {
+                handler = *b;
+            }
+        } else if key == "register" {
+            if let toml::Value::String(s) = value {
+                register = Some(s.clone());
+            }
+        } else {
+            let interpolated = match value {
+                toml::Value::String(s) => {
+                    let (protected, names) = protect_register_refs(s);
+                    register_refs.extend(names);
+                    let rendered = vars::render(jinja, &protected, &host.vars)?;
+                    toml::Value::String(restore_register_refs(&rendered))
+                }
+                other => other.clone(),
+            };
+            props.insert(key.clone(), interpolated);
+        }
+    }
+
+    if let Some(toml::Value::Table(var_overrides)) = props.remove("vars") {
+        for (k, v) in var_overrides {
+            if let toml::Value::String(s) = &v {
+                let interpolated = vars::render(jinja, s, &host.vars)?;
+                props.entry(k).or_insert(toml::Value::String(interpolated));
+            }
+        }
+    }
+
+    let is_template = props
+        .remove("template")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let fqn = format!("{}.{}", decl.resource_type, decl.name);
+
+    // Resolve `source` files on the control machine and inline as `content`
+    if let Some(toml::Value::String(source_path)) = props.remove("source") {
+        let (content, names) = render_file(
+            jinja,
+            &base_dir.join(&source_path),
+            &host.vars,
+            is_template,
+            "source",
+            &fqn,
+            &source_path,
+        )?;
+        register_refs.extend(names);
+        props.insert("content".into(), toml::Value::String(content));
+    }
+
+    // Resolve `compose_file` for docker_compose resources
+    if let Some(toml::Value::String(compose_path)) = props.remove("compose_file") {
+        let (content, names) = render_file(
+            jinja,
+            &base_dir.join(&compose_path),
+            &host.vars,
+            is_template,
+            "compose",
+            &fqn,
+            &compose_path,
+        )?;
+        register_refs.extend(names);
+        props.insert("content".into(), toml::Value::String(content));
+    }
+
+    // Resolve `env_file` for docker_compose resources
+    if let Some(toml::Value::String(env_path)) = props.remove("env_file") {
+        let (content, names) = render_file(
+            jinja,
+            &base_dir.join(&env_path),
+            &host.vars,
+            is_template,
+            "env",
+            &fqn,
+            &env_path,
+        )?;
+        register_refs.extend(names);
+        props.insert("env_content".into(), toml::Value::String(content));
+    }
+
+    // Deduplicate register refs
+    register_refs.sort();
+    register_refs.dedup();
+
+    let resource = ResolvedResource {
+        resource_type: decl.resource_type.clone(),
+        name: decl.name.clone(),
+        props,
+        after,
+        notify,
+        when,
+        handler,
+        register,
+    };
+
+    Ok((resource, register_refs))
+}
+
+/// Validate that register names are unique and all register references have
+/// proper `after` dependencies declared.
+fn validate_registers(
+    resources: &[ResolvedResource],
+    register_refs_per_resource: &[Vec<String>],
+) -> Result<(), Error> {
+    // Validate register names are unique
+    let mut register_names: HashMap<String, String> = HashMap::new();
+    for r in resources {
+        if let Some(ref reg_name) = r.register {
+            if let Some(existing_fqn) = register_names.get(reg_name) {
+                return Err(Error::Config(format!(
+                    "duplicate register name '{reg_name}': used by both {existing_fqn} and {}",
+                    r.fqn()
+                )));
+            }
+            register_names.insert(reg_name.clone(), r.fqn());
+        }
+    }
+
+    // Validate register references have proper after dependencies
+    for (r, ref_names) in resources.iter().zip(register_refs_per_resource) {
+        for ref_name in ref_names {
+            let reg_fqn = register_names.get(ref_name).ok_or_else(|| {
+                Error::Config(format!(
+                    "{}: references unknown register '{ref_name}'",
+                    r.fqn()
+                ))
+            })?;
+            if !r.after.contains(reg_fqn) {
+                return Err(Error::Config(format!(
+                    "{}: uses register '{ref_name}' but does not declare after = [\"{reg_fqn}\"]",
+                    r.fqn()
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract fact.* and group.* string vars for `when` conditional evaluation.
+fn extract_facts(host_vars: &HashMap<String, toml::Value>) -> HashMap<String, String> {
+    let mut facts = HashMap::new();
+    for (k, v) in host_vars {
+        if (k.starts_with("fact.") || k.starts_with("group."))
+            && let toml::Value::String(s) = v
+        {
+            facts.insert(k.clone(), s.clone());
+        }
+    }
+    facts
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bundle {
     pub host: String,
@@ -82,8 +308,9 @@ impl Bundle {
     /// Build a bundle for a specific host.
     /// `base_dir` is the verg project directory (used to resolve `source` file paths).
     pub fn build(host: &Host, state_files: &[StateFile], base_dir: &Path) -> Result<Self, Error> {
-        let env = vars::create_env();
+        let jinja = vars::create_env();
         let mut resources = Vec::new();
+        let mut register_refs_per_resource: Vec<Vec<String>> = Vec::new();
 
         for sf in state_files {
             if let Some(targets) = &sf.targets {
@@ -96,204 +323,15 @@ impl Bundle {
             }
 
             for decl in sf.resources()? {
-                let mut props = HashMap::new();
-                let mut after = Vec::new();
-                let mut notify = Vec::new();
-                let mut when = None;
-                let mut handler = false;
-                let mut register = None;
-
-                for (key, value) in &decl.props {
-                    if key == "when" {
-                        if let toml::Value::String(s) = value {
-                            when = Some(s.clone());
-                        }
-                    } else if key == "after" {
-                        if let toml::Value::Array(arr) = value {
-                            for item in arr {
-                                if let toml::Value::String(s) = item {
-                                    after.push(s.clone());
-                                }
-                            }
-                        }
-                    } else if key == "notify" {
-                        match value {
-                            toml::Value::String(s) => notify.push(s.clone()),
-                            toml::Value::Array(arr) => {
-                                for item in arr {
-                                    if let toml::Value::String(s) = item {
-                                        notify.push(s.clone());
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    } else if key == "handler" {
-                        if let toml::Value::Boolean(b) = value {
-                            handler = *b;
-                        }
-                    } else if key == "register" {
-                        if let toml::Value::String(s) = value {
-                            register = Some(s.clone());
-                        }
-                    } else {
-                        let interpolated = match value {
-                            toml::Value::String(s) => {
-                                let (protected, _) = protect_register_refs(s);
-                                let rendered = vars::render(&env, &protected, &host.vars)?;
-                                toml::Value::String(restore_register_refs(&rendered))
-                            }
-                            other => other.clone(),
-                        };
-                        props.insert(key.clone(), interpolated);
-                    }
-                }
-
-                if let Some(toml::Value::Table(var_overrides)) = props.remove("vars") {
-                    for (k, v) in var_overrides {
-                        if let toml::Value::String(s) = &v {
-                            let interpolated = vars::render(&env, s, &host.vars)?;
-                            props.entry(k).or_insert(toml::Value::String(interpolated));
-                        }
-                    }
-                }
-
-                let is_template = props
-                    .remove("template")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-
-                // Resolve `source` files on the control machine and inline as `content`
-                if let Some(toml::Value::String(source_path)) = props.remove("source") {
-                    let full_path = base_dir.join(&source_path);
-                    let content = std::fs::read_to_string(&full_path).map_err(|e| {
-                        Error::Config(format!(
-                            "failed to read source file {}: {e}",
-                            full_path.display()
-                        ))
-                    })?;
-                    let content = if is_template {
-                        let (protected, _) = protect_register_refs(&content);
-                        let rendered = vars::render(&env, &protected, &host.vars).map_err(|e| {
-                            Error::Config(format!(
-                                "{}.{}: template error in source {}: {e}",
-                                decl.resource_type, decl.name, source_path
-                            ))
-                        })?;
-                        restore_register_refs(&rendered)
-                    } else {
-                        content
-                    };
-                    props.insert("content".into(), toml::Value::String(content));
-                }
-
-                // Resolve `compose_file` for docker_compose resources
-                if let Some(toml::Value::String(compose_path)) = props.remove("compose_file") {
-                    let full_path = base_dir.join(&compose_path);
-                    let content = std::fs::read_to_string(&full_path).map_err(|e| {
-                        Error::Config(format!(
-                            "failed to read compose file {}: {e}",
-                            full_path.display()
-                        ))
-                    })?;
-                    let content = if is_template {
-                        let (protected, _) = protect_register_refs(&content);
-                        let rendered = vars::render(&env, &protected, &host.vars).map_err(|e| {
-                            Error::Config(format!(
-                                "{}.{}: template error in compose file {}: {e}",
-                                decl.resource_type, decl.name, compose_path
-                            ))
-                        })?;
-                        restore_register_refs(&rendered)
-                    } else {
-                        content
-                    };
-                    props.insert("content".into(), toml::Value::String(content));
-                }
-
-                // Resolve `env_file` for docker_compose resources
-                if let Some(toml::Value::String(env_path)) = props.remove("env_file") {
-                    let full_path = base_dir.join(&env_path);
-                    let content = std::fs::read_to_string(&full_path).map_err(|e| {
-                        Error::Config(format!(
-                            "failed to read env file {}: {e}",
-                            full_path.display()
-                        ))
-                    })?;
-                    let content = if is_template {
-                        let (protected, _) = protect_register_refs(&content);
-                        let rendered = vars::render(&env, &protected, &host.vars).map_err(|e| {
-                            Error::Config(format!(
-                                "{}.{}: template error in env file {}: {e}",
-                                decl.resource_type, decl.name, env_path
-                            ))
-                        })?;
-                        restore_register_refs(&rendered)
-                    } else {
-                        content
-                    };
-                    props.insert("env_content".into(), toml::Value::String(content));
-                }
-
-                resources.push(ResolvedResource {
-                    resource_type: decl.resource_type,
-                    name: decl.name,
-                    props,
-                    after,
-                    notify,
-                    when,
-                    handler,
-                    register,
-                });
+                let (resource, reg_refs) = build_resource(&jinja, &decl, host, base_dir)?;
+                resources.push(resource);
+                register_refs_per_resource.push(reg_refs);
             }
         }
 
-        // Validate register names are unique
-        let mut register_names: HashMap<String, String> = HashMap::new();
-        for r in &resources {
-            if let Some(ref reg_name) = r.register {
-                if let Some(existing_fqn) = register_names.get(reg_name) {
-                    return Err(Error::Config(format!(
-                        "duplicate register name '{reg_name}': used by both {existing_fqn} and {}",
-                        r.fqn()
-                    )));
-                }
-                register_names.insert(reg_name.clone(), r.fqn());
-            }
-        }
+        validate_registers(&resources, &register_refs_per_resource)?;
 
-        // Validate register references have proper after dependencies
-        for r in &resources {
-            for value in r.props.values() {
-                if let toml::Value::String(s) = value {
-                    let (_, ref_names) = protect_register_refs(s);
-                    for ref_name in ref_names {
-                        let reg_fqn = register_names.get(&ref_name).ok_or_else(|| {
-                            Error::Config(format!(
-                                "{}: references unknown register '{ref_name}'",
-                                r.fqn()
-                            ))
-                        })?;
-                        if !r.after.contains(reg_fqn) {
-                            return Err(Error::Config(format!(
-                                "{}: uses register '{ref_name}' but does not declare after = [\"{reg_fqn}\"]",
-                                r.fqn()
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Extract fact.* and group.* vars into the facts map for when evaluation
-        let mut facts = HashMap::new();
-        for (k, v) in &host.vars {
-            if (k.starts_with("fact.") || k.starts_with("group."))
-                && let toml::Value::String(s) = v
-            {
-                facts.insert(k.clone(), s.clone());
-            }
-        }
+        let facts = extract_facts(&host.vars);
 
         Ok(Bundle {
             host: host.name.clone(),
