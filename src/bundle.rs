@@ -5,9 +5,70 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 use crate::inventory::Host;
-use crate::resources::ResolvedResource;
+use crate::resources::{REGISTER_SENTINEL, REGISTER_SENTINEL_END, ResolvedResource};
 use crate::state::StateFile;
 use crate::state::vars;
+
+fn protect_register_refs(input: &str) -> (String, Vec<String>) {
+    let mut result = String::with_capacity(input.len());
+    let mut names = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '{' && chars.peek() == Some(&'{') {
+            chars.next(); // consume second {
+            let mut inner = String::new();
+            let mut found_close = false;
+            while let Some(ch) = chars.next() {
+                if ch == '}' && chars.peek() == Some(&'}') {
+                    chars.next();
+                    found_close = true;
+                    break;
+                }
+                inner.push(ch);
+            }
+            if found_close {
+                let trimmed = inner.trim();
+                if let Some(reg_name) = trimmed.strip_prefix("register.") {
+                    let reg_name = reg_name.trim().to_string();
+                    result.push_str(REGISTER_SENTINEL);
+                    result.push_str(&reg_name);
+                    result.push_str(REGISTER_SENTINEL_END);
+                    if !names.contains(&reg_name) {
+                        names.push(reg_name);
+                    }
+                } else {
+                    result.push_str("{{");
+                    result.push_str(&inner);
+                    result.push_str("}}");
+                }
+            } else {
+                result.push_str("{{");
+                result.push_str(&inner);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    (result, names)
+}
+
+fn restore_register_refs(input: &str) -> String {
+    let mut result = input.to_string();
+    while let Some(start) = result.find(REGISTER_SENTINEL) {
+        let after_prefix = start + REGISTER_SENTINEL.len();
+        if let Some(end) = result[after_prefix..].find(REGISTER_SENTINEL_END) {
+            let name = result[after_prefix..after_prefix + end].to_string();
+            let sentinel = format!("{REGISTER_SENTINEL}{name}{REGISTER_SENTINEL_END}");
+            let replacement = format!("{{{{ register.{name} }}}}");
+            result = result.replacen(&sentinel, &replacement, 1);
+        } else {
+            break;
+        }
+    }
+    result
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bundle {
@@ -77,7 +138,9 @@ impl Bundle {
                     } else {
                         let interpolated = match value {
                             toml::Value::String(s) => {
-                                toml::Value::String(vars::render(s, &host.vars)?)
+                                let (protected, _) = protect_register_refs(s);
+                                let rendered = vars::render(&protected, &host.vars)?;
+                                toml::Value::String(restore_register_refs(&rendered))
                             }
                             other => other.clone(),
                         };
@@ -109,12 +172,14 @@ impl Bundle {
                         ))
                     })?;
                     let content = if is_template {
-                        vars::render(&content, &host.vars).map_err(|e| {
+                        let (protected, _) = protect_register_refs(&content);
+                        let rendered = vars::render(&protected, &host.vars).map_err(|e| {
                             Error::Config(format!(
                                 "{}.{}: template error in source {}: {e}",
                                 decl.resource_type, decl.name, source_path
                             ))
-                        })?
+                        })?;
+                        restore_register_refs(&rendered)
                     } else {
                         content
                     };
@@ -131,12 +196,14 @@ impl Bundle {
                         ))
                     })?;
                     let content = if is_template {
-                        vars::render(&content, &host.vars).map_err(|e| {
+                        let (protected, _) = protect_register_refs(&content);
+                        let rendered = vars::render(&protected, &host.vars).map_err(|e| {
                             Error::Config(format!(
                                 "{}.{}: template error in compose file {}: {e}",
                                 decl.resource_type, decl.name, compose_path
                             ))
-                        })?
+                        })?;
+                        restore_register_refs(&rendered)
                     } else {
                         content
                     };
@@ -165,6 +232,43 @@ impl Bundle {
                     handler,
                     register,
                 });
+            }
+        }
+
+        // Validate register names are unique
+        let mut register_names: HashMap<String, String> = HashMap::new();
+        for r in &resources {
+            if let Some(ref reg_name) = r.register {
+                if let Some(existing_fqn) = register_names.get(reg_name) {
+                    return Err(Error::Config(format!(
+                        "duplicate register name '{reg_name}': used by both {existing_fqn} and {}",
+                        r.fqn()
+                    )));
+                }
+                register_names.insert(reg_name.clone(), r.fqn());
+            }
+        }
+
+        // Validate register references have proper after dependencies
+        for r in &resources {
+            for value in r.props.values() {
+                if let toml::Value::String(s) = value {
+                    let (_, ref_names) = protect_register_refs(s);
+                    for ref_name in ref_names {
+                        let reg_fqn = register_names.get(&ref_name).ok_or_else(|| {
+                            Error::Config(format!(
+                                "{}: references unknown register '{ref_name}'",
+                                r.fqn()
+                            ))
+                        })?;
+                        if !r.after.contains(reg_fqn) {
+                            return Err(Error::Config(format!(
+                                "{}: uses register '{ref_name}' but does not declare after = [\"{reg_fqn}\"]",
+                                r.fqn()
+                            )));
+                        }
+                    }
+                }
             }
         }
 
@@ -417,6 +521,88 @@ unless = "true"
         let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
         assert!(bundle.resources[0].handler);
         assert!(!bundle.resources[0].props.contains_key("handler"));
+    }
+
+    #[test]
+    fn bundle_passes_through_register_references() {
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.cmd.get-ip]
+command = "hostname -I"
+register = "host_ip"
+
+[resource.file.conf]
+path = "/etc/app.conf"
+content = "ip={{ register.host_ip }}"
+after = ["cmd.get-ip"]
+"#,
+        )];
+
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp")).unwrap();
+        let content = bundle.resources.iter().find(|r| r.name == "conf").unwrap();
+        let val = content.props["content"].as_str().unwrap();
+        assert!(
+            val.contains("register.host_ip"),
+            "register ref should survive: {val}"
+        );
+    }
+
+    #[test]
+    fn bundle_errors_on_register_ref_without_dependency() {
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.cmd.get-ip]
+command = "hostname -I"
+register = "host_ip"
+
+[resource.file.conf]
+path = "/etc/app.conf"
+content = "ip={{ register.host_ip }}"
+"#,
+        )];
+
+        let result = Bundle::build(&host, &files, Path::new("/tmp"));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("after"));
+    }
+
+    #[test]
+    fn bundle_errors_on_unknown_register_ref() {
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.file.conf]
+path = "/etc/app.conf"
+content = "ip={{ register.nonexistent }}"
+"#,
+        )];
+
+        let result = Bundle::build(&host, &files, Path::new("/tmp"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn bundle_errors_on_duplicate_register_names() {
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.cmd.a]
+command = "echo a"
+register = "result"
+
+[resource.cmd.b]
+command = "echo b"
+register = "result"
+"#,
+        )];
+
+        let result = Bundle::build(&host, &files, Path::new("/tmp"));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("result"));
     }
 
     #[test]
