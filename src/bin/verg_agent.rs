@@ -41,17 +41,9 @@ fn interpolate_registers(
     res
 }
 
-/// Execute a handler resource, bypassing guards (creates/unless/onlyif).
+/// Execute a handler resource, bypassing guard requirements.
 fn execute_handler(resource: &ResolvedResource, dry_run: bool) -> ResourceResult {
-    let mut res = resource.clone();
-    res.props.remove("creates");
-    res.props.remove("unless");
-    res.props.remove("onlyif");
-    if res.resource_type == "cmd" {
-        res.props
-            .insert("onlyif".into(), toml::Value::String("true".into()));
-    }
-    let mut result = resources::execute_resource(&res, dry_run);
+    let mut result = resources::execute_resource(resource, dry_run, true);
     result.name = format!("{} (handler)", result.name);
     result
 }
@@ -280,7 +272,7 @@ fn main() {
 
             // Interpolate register sentinel tokens
             let interpolated = interpolate_registers(resource, &registers);
-            let result = resources::execute_resource(&interpolated, dry_run);
+            let result = resources::execute_resource(&interpolated, dry_run, false);
 
             // Capture register output
             if let Some(ref reg_name) = resource.register

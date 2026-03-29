@@ -4,7 +4,11 @@ use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
 
-pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
+pub fn execute(
+    resource: &ResolvedResource,
+    dry_run: bool,
+    notified: bool,
+) -> Result<ResourceResult, Error> {
     let command = resource
         .props
         .get("command")
@@ -16,7 +20,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     let onlyif = resource.props.get("onlyif").and_then(|v| v.as_str());
 
     let has_register = resource.register.is_some();
-    if !has_register && creates.is_none() && unless.is_none() && onlyif.is_none() {
+    if !notified && !has_register && creates.is_none() && unless.is_none() && onlyif.is_none() {
         return Err(Error::Resource(
             "cmd resource requires at least one guard: 'creates', 'unless', or 'onlyif' (or 'register')".into(),
         ));
@@ -140,7 +144,7 @@ mod tests {
     fn register_cmd_does_not_require_guard() {
         let mut r = cmd_resource("get-ip", "echo 10.0.0.1", &[]);
         r.register = Some("ip".into());
-        let result = execute(&r, false).unwrap();
+        let result = execute(&r, false, false).unwrap();
         assert_eq!(result.status, ResourceStatus::Changed);
         assert_eq!(result.output, Some("10.0.0.1".into()));
     }
@@ -148,7 +152,7 @@ mod tests {
     #[test]
     fn non_register_cmd_requires_guard() {
         let r = cmd_resource("bad", "echo hello", &[]);
-        let result = execute(&r, false);
+        let result = execute(&r, false, false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("guard"));
     }
@@ -157,7 +161,7 @@ mod tests {
     fn register_cmd_captures_stdout_trimmed() {
         let mut r = cmd_resource("ver", "printf '  hello  \\n'", &[]);
         r.register = Some("version".into());
-        let result = execute(&r, false).unwrap();
+        let result = execute(&r, false, false).unwrap();
         assert_eq!(result.output, Some("hello".into()));
     }
 
@@ -165,7 +169,7 @@ mod tests {
     fn register_cmd_dry_run() {
         let mut r = cmd_resource("get-ip", "echo 10.0.0.1", &[]);
         r.register = Some("ip".into());
-        let result = execute(&r, true).unwrap();
+        let result = execute(&r, true, false).unwrap();
         assert_eq!(result.status, ResourceStatus::Changed);
         assert!(result.output.is_none());
     }
@@ -177,7 +181,7 @@ mod tests {
             "echo done",
             &[("unless", toml::Value::String("false".into()))],
         );
-        let result = execute(&r, false).unwrap();
+        let result = execute(&r, false, false).unwrap();
         assert_eq!(result.status, ResourceStatus::Changed);
     }
 }

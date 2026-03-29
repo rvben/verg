@@ -114,7 +114,11 @@ impl ResolvedResource {
     }
 }
 
-pub fn execute_resource(resource: &ResolvedResource, dry_run: bool) -> ResourceResult {
+pub fn execute_resource(
+    resource: &ResolvedResource,
+    dry_run: bool,
+    notified: bool,
+) -> ResourceResult {
     let result = match resource.resource_type.as_str() {
         "apt_repo" => apt_repo::execute(resource, dry_run),
         "directory" => directory::execute(resource, dry_run),
@@ -123,7 +127,7 @@ pub fn execute_resource(resource: &ResolvedResource, dry_run: bool) -> ResourceR
         "pkg" => pkg::execute(resource, dry_run),
         "file" => file::execute(resource, dry_run),
         "service" => service::execute(resource, dry_run),
-        "cmd" => cmd::execute(resource, dry_run),
+        "cmd" => cmd::execute(resource, dry_run, notified),
         "user" => user::execute(resource, dry_run),
         other => Err(Error::Resource(format!("unknown resource type: {other}"))),
     };
