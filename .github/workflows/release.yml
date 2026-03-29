@@ -240,7 +240,6 @@ jobs:
             artifacts/release-*/verg-*.tar.gz
             artifacts/release-*/verg-*.tar.gz.sha256
             artifacts/release-*/verg-agent-*
-            artifacts/release-*/verg-agent-*.sha256
 
       - name: Dry Run Summary
         if: ${{ inputs.dry_run == true }}
