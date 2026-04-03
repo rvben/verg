@@ -193,7 +193,16 @@ pub fn run_cmd_with_stdin(
     write_thread
         .join()
         .map_err(|_| Error::Resource("stdin write thread panicked".into()))?
-        .map_err(|e| Error::Resource(format!("failed to write stdin: {e}")))?;
+        .or_else(|e| {
+            // Broken pipe means the child exited before consuming all stdin,
+            // which is valid (e.g. the command ignores its stdin). The exit
+            // status collected above is the authoritative result.
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                Ok(())
+            } else {
+                Err(Error::Resource(format!("failed to write stdin: {e}")))
+            }
+        })?;
 
     Ok(output)
 }
