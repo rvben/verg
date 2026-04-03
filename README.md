@@ -1,3 +1,8 @@
+[![CI](https://github.com/rvben/verg/actions/workflows/ci.yml/badge.svg)](https://github.com/rvben/verg/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/verg.svg)](https://crates.io/crates/verg)
+[![PyPI](https://img.shields.io/pypi/v/verg.svg)](https://pypi.org/project/verg/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 # verg
 
 Desired-state infrastructure convergence engine. A fast, stateless alternative to Ansible, built in Rust.
