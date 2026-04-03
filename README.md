@@ -2,6 +2,7 @@
 [![Crates.io](https://img.shields.io/crates/v/verg.svg)](https://crates.io/crates/verg)
 [![PyPI](https://img.shields.io/pypi/v/verg.svg)](https://pypi.org/project/verg/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/rvben/verg/graph/badge.svg)](https://codecov.io/gh/rvben/verg)
 
 # verg
 
