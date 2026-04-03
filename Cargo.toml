@@ -1,6 +1,6 @@
 [package]
 name = "verg"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 rust-version = "1.90"
 description = "Desired-state infrastructure convergence engine"
