@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.6.3](https://github.com/rvben/verg/compare/v0.6.2...v0.6.3) - 2026-05-25
+
+### Fixed
+
+- **agent**: rewrite register interpolation loop as while-let ([38643c2](https://github.com/rvben/verg/commit/38643c2e66d85b89ec2a16aaaedcddb71e5c938c))
+- **cmd**: tolerate broken pipe when child ignores stdin ([386e1ac](https://github.com/rvben/verg/commit/386e1ace6ac1d8496ab1afea6af319c51335f73f))
+
 ## [0.6.2](https://github.com/rvben/verg/compare/v0.6.1...v0.6.2) - 2026-04-03
 
 ## [0.6.1](https://github.com/rvben/verg/compare/v0.6.0...v0.6.1) - 2026-04-03
