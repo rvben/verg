@@ -328,6 +328,24 @@ jobs:
             artifacts/release-*/verg-*.tar.gz.sha256
             artifacts/release-*/verg-agent-*
 
+      - name: Remove stuck draft on failure
+        if: ${{ failure() && inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # action-gh-release uploads assets to a draft and only publishes as its
+          # final step. A failed run therefore leaves the release stuck as a
+          # draft, and draft assets return 404 on the public download URL the CLI
+          # uses to fetch its agent binary. Delete that draft so the tag can be
+          # re-released cleanly and no client points at an unreachable release.
+          tag="${GITHUB_REF_NAME}"
+          if [ "$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null)" = "true" ]; then
+            echo "Deleting stuck draft release $tag"
+            gh release delete "$tag" --yes
+          else
+            echo "No draft release for $tag to clean up"
+          fi
+
       - name: Dry Run Summary
         if: ${{ inputs.dry_run == true }}
         run: |
