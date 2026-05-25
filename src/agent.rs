@@ -11,10 +11,7 @@ pub fn interpolate_registers(
     for value in res.props.values_mut() {
         if let toml::Value::String(s) = value {
             let mut result = s.clone();
-            loop {
-                let Some(start) = result.find(REGISTER_SENTINEL) else {
-                    break;
-                };
+            while let Some(start) = result.find(REGISTER_SENTINEL) {
                 let after_prefix = start + REGISTER_SENTINEL.len();
                 let Some(end) = result[after_prefix..].find(REGISTER_SENTINEL_END) else {
                     break;
