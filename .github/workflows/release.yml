@@ -373,7 +373,7 @@ jobs:
 
       - name: Update Homebrew formula
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
         run: |
           VERSION="${{ github.ref_name }}"
           VERSION_NUM="${VERSION#v}"
@@ -422,8 +422,17 @@ jobs:
           sed -i "s/SHA_AARCH64_UNKNOWN_LINUX_GNU/${{ steps.hashes.outputs.aarch64_unknown_linux_gnu }}/g" /tmp/verg.rb
           sed -i "s/SHA_X86_64_UNKNOWN_LINUX_GNU/${{ steps.hashes.outputs.x86_64_unknown_linux_gnu }}/g" /tmp/verg.rb
 
+          # Authenticate to the tap with a write-enabled SSH deploy key. The key
+          # is scoped to rvben/homebrew-tap only, never expires, and is decoupled
+          # from any user account, so it does not silently rot like a PAT.
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/tap_deploy
+          chmod 600 ~/.ssh/tap_deploy
+          ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy -o IdentitiesOnly=yes"
+
           # Clone tap repo, update formula, push
-          git clone https://x-access-token:${GH_TOKEN}@github.com/rvben/homebrew-tap.git /tmp/tap
+          git clone git@github.com:rvben/homebrew-tap.git /tmp/tap
           mkdir -p /tmp/tap/Formula
           cp /tmp/verg.rb /tmp/tap/Formula/verg.rb
           cd /tmp/tap
