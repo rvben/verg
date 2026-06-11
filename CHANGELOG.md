@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.6.4](https://github.com/rvben/verg/compare/v0.6.3...v0.6.4) - 2026-06-11
+
+### Added
+
+- bring verg to clispec v0.2 compliance (24/24) ([9c38c62](https://github.com/rvben/verg/commit/9c38c62eca47a5fdf65bedfb1b7d81470ec32d9f))
+
 ## [0.6.3](https://github.com/rvben/verg/compare/v0.6.2...v0.6.3) - 2026-05-25
 
 ### Fixed
