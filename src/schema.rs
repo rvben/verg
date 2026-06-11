@@ -2,16 +2,96 @@ use serde_json::{Value, json};
 
 pub fn run() {
     let schema = json!({
-        "tool": "verg",
+        "clispec": "0.2",
+        "name": "verg",
         "version": env!("CARGO_PKG_VERSION"),
         "description": "Desired-state infrastructure convergence engine",
-        "common_properties": {
-            "after": {"type": "array", "items": {"type": "string"}, "description": "Resources that must complete before this one (FQN format: type.name)"},
-            "notify": {"type": "array", "items": {"type": "string"}, "description": "Targets to notify on change. FQN for handler resources, or shorthand: restart:svc, reload:svc, daemon-reload, docker-restart:/path, docker-up:/path"},
-            "when": {"type": "string", "description": "Conditional expression (e.g. fact.arch == 'x86_64', group.docker, !group.monitoring)"},
-            "handler": {"type": "boolean", "description": "If true, resource only executes when notified (guards are bypassed)", "default": false},
-            "template": {"type": "boolean", "description": "If true, source/compose_file content is rendered through the Jinja2 template engine", "default": false},
-        },
+        "global_args": [
+            {"name": "--output", "type": "string", "enum": ["auto", "text", "json"], "default": "auto", "description": "Output format"},
+            {"name": "--quiet", "type": "boolean", "description": "Suppress non-essential output"},
+            {"name": "--path", "type": "path", "description": "Path to verg project directory"},
+            {"name": "--parallel", "type": "integer", "default": 10, "description": "Maximum parallel connections"},
+            {"name": "--ssh-config", "type": "path", "description": "Path to SSH config file"},
+            {"name": "--yes", "type": "boolean", "description": "Skip confirmation prompts for destructive operations"}
+        ],
+        "commands": [
+            {
+                "name": "apply",
+                "description": "Converge targets to desired state",
+                "mutating": true,
+                "args": [
+                    {"name": "--targets", "type": "string", "required": true, "description": "Target pattern to match hosts"}
+                ],
+                "output_fields": [
+                    {"name": "host", "type": "string"},
+                    {"name": "resources", "type": "array"},
+                    {"name": "summary", "type": "object"}
+                ]
+            },
+            {
+                "name": "diff",
+                "description": "Show what would change without applying",
+                "mutating": false,
+                "args": [
+                    {"name": "--targets", "type": "string", "required": false, "default": "all", "description": "Target pattern to match hosts (default: all)"},
+                    {"name": "--limit", "type": "integer", "default": 100, "description": "Maximum number of results"},
+                    {"name": "--offset", "type": "integer", "default": 0, "description": "Number of results to skip"},
+                    {"name": "--fields", "type": "string", "description": "Comma-separated list of fields to include"}
+                ],
+                "output_fields": [
+                    {"name": "host", "type": "string"},
+                    {"name": "resources", "type": "array"},
+                    {"name": "total", "type": "integer"},
+                    {"name": "limit", "type": "integer"},
+                    {"name": "offset", "type": "integer"}
+                ]
+            },
+            {
+                "name": "check",
+                "description": "Verify targets match desired state (exit code only)",
+                "mutating": false,
+                "args": [
+                    {"name": "--targets", "type": "string", "required": false, "default": "all", "description": "Target pattern to match hosts (default: all)"}
+                ],
+                "output_fields": [
+                    {"name": "host", "type": "string"},
+                    {"name": "resources", "type": "array"},
+                    {"name": "summary", "type": "object"}
+                ]
+            },
+            {
+                "name": "schema",
+                "description": "Print resource type schemas as JSON",
+                "mutating": false,
+                "args": [],
+                "output_fields": []
+            },
+            {
+                "name": "init",
+                "description": "Scaffold a new verg project directory",
+                "mutating": true,
+                "args": [],
+                "output_fields": []
+            },
+            {
+                "name": "completions",
+                "description": "Generate shell completions",
+                "mutating": false,
+                "args": [
+                    {"name": "shell", "type": "string", "required": true, "enum": ["bash", "fish", "zsh", "powershell", "elvish"]}
+                ],
+                "output_fields": []
+            }
+        ],
+        "errors": [
+            {"kind": "invalid_config", "exit_code": 5, "retryable": false, "description": "Configuration file is missing, malformed, or contains invalid values"},
+            {"kind": "connection_error", "exit_code": 4, "retryable": true, "description": "SSH connection to a target host failed"},
+            {"kind": "not_found", "exit_code": 6, "retryable": false, "description": "No hosts matched the given target pattern"},
+            {"kind": "resource_error", "exit_code": 2, "retryable": false, "description": "One or more resources failed to converge"},
+            {"kind": "internal_error", "exit_code": 7, "retryable": false, "description": "Unexpected internal error"},
+            {"kind": "confirmation_required", "exit_code": 2, "retryable": false, "description": "Operation requires confirmation; pass --yes to proceed non-interactively"},
+            {"kind": "conflict", "exit_code": 8, "retryable": false, "description": "State conflict that cannot be automatically resolved"}
+        ],
         "resource_types": resource_schemas(),
     });
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
@@ -58,7 +138,7 @@ fn resource_schemas() -> Value {
             "required": ["url", "dest"],
         },
         "pkg": {
-            "description": "Manage system packages (apt, dnf, pacman — auto-detected)",
+            "description": "Manage system packages (apt, dnf, pacman - auto-detected)",
             "properties": {
                 "name": {"type": "string", "description": "Package name (single)"},
                 "names": {"type": "array", "items": {"type": "string"}, "description": "Package names (multiple)"},
@@ -113,7 +193,7 @@ fn resource_schemas() -> Value {
                 "creates": {"type": "string", "description": "Skip if this path exists"},
                 "unless": {"type": "string", "description": "Skip if this command succeeds"},
                 "onlyif": {"type": "string", "description": "Only run if this command succeeds"},
-                "stdin": {"type": "string", "description": "Data to pipe to the command's stdin. Treated as sensitive — never echoed in diffs or output. Supports template variables (e.g. {{ smb_password }})."},
+                "stdin": {"type": "string", "description": "Data to pipe to the command's stdin. Treated as sensitive - never echoed in diffs or output. Supports template variables (e.g. {{ smb_password }})."},
                 "register": {"type": "string", "description": "Capture stdout into a named register for use in downstream resources via {{ register.NAME }}"},
             },
             "required": ["command"],
@@ -175,7 +255,7 @@ mod tests {
     #[test]
     fn schema_has_common_properties() {
         let schema = json!({
-            "tool": "verg",
+            "name": "verg",
             "version": env!("CARGO_PKG_VERSION"),
             "description": "Desired-state infrastructure convergence engine",
             "common_properties": {
@@ -203,5 +283,20 @@ mod tests {
         let pkg = &schemas["pkg"];
         assert!(pkg["properties"]["name"].is_object());
         assert!(pkg["properties"]["state"].is_object());
+    }
+
+    #[test]
+    fn schema_has_clispec_v0_2_fields() {
+        let schema = json!({
+            "clispec": "0.2",
+            "name": "verg",
+            "version": env!("CARGO_PKG_VERSION"),
+            "commands": [],
+        });
+        let obj = schema.as_object().unwrap();
+        assert_eq!(obj["clispec"], "0.2");
+        assert_eq!(obj["name"], "verg");
+        assert!(obj.contains_key("version"));
+        assert!(obj.contains_key("commands"));
     }
 }

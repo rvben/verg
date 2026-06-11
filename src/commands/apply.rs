@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::Path;
 
 use crate::engine::{Engine, EngineResult};
@@ -9,8 +10,14 @@ pub async fn run(
     engine: &Engine,
     base_dir: &Path,
     targets: &str,
+    yes: bool,
     output: &OutputConfig,
 ) -> Result<i32, Error> {
+    if !yes && !std::io::stdin().is_terminal() {
+        return Err(Error::ConfirmationRequired(
+            "apply modifies infrastructure; pass --yes to confirm non-interactively".into(),
+        ));
+    }
     let result = engine.run(base_dir, targets, false).await?;
     print_result(&result, output);
 
@@ -23,7 +30,11 @@ pub async fn run(
 
 pub fn print_result(result: &EngineResult, output: &OutputConfig) {
     if output.json {
-        let json = serde_json::to_string_pretty(&result.summaries).unwrap();
+        let envelope = serde_json::json!({
+            "items": &result.summaries,
+            "total": result.summaries.len()
+        });
+        let json = serde_json::to_string_pretty(&envelope).unwrap();
         println!("{json}");
     } else {
         for summary in &result.summaries {
@@ -35,7 +46,7 @@ pub fn print_result(result: &EngineResult, output: &OutputConfig) {
                     ResourceStatus::Skipped => ("-", "skipped"),
                 };
                 let detail = match &r.diff {
-                    Some(d) => format!(" → {d}"),
+                    Some(d) => format!(" -> {d}"),
                     None => match &r.error {
                         Some(e) => format!(" ({e})"),
                         None => String::new(),

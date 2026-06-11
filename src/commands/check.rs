@@ -12,7 +12,11 @@ pub async fn run(
 ) -> Result<i32, Error> {
     let result = engine.run(base_dir, targets, true).await?;
     if output.json {
-        let json = serde_json::to_string_pretty(&result.summaries).unwrap();
+        let envelope = serde_json::json!({
+            "items": &result.summaries,
+            "total": result.summaries.len()
+        });
+        let json = serde_json::to_string_pretty(&envelope).unwrap();
         println!("{json}");
     }
     Ok(result.exit_code())

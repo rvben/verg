@@ -6,7 +6,7 @@ use clap::Parser;
 use verg::commands;
 use verg::engine::Engine;
 use verg::error::Error;
-use verg::output::OutputConfig;
+use verg::output::{OutputConfig, OutputFormat};
 use verg::transport::ssh::SshTransport;
 
 #[derive(Parser)]
@@ -16,8 +16,18 @@ use verg::transport::ssh::SshTransport;
     about = "Desired-state infrastructure convergence engine"
 )]
 struct Cli {
-    #[arg(long, global = true)]
+    #[arg(long, short = 'o', global = true, default_value = "auto", value_enum)]
+    output: OutputFormat,
+
+    /// Emit JSON output (alias for --output=json)
+    #[arg(long, global = true, hide = true)]
     json: bool,
+
+    #[arg(long, short = 'q', global = true)]
+    quiet: bool,
+
+    #[arg(long, short = 'y', global = true)]
+    yes: bool,
 
     #[arg(long, env = "VERG_PATH", global = true)]
     path: Option<PathBuf>,
@@ -46,12 +56,23 @@ enum Command {
     },
     /// Show what would change without applying
     Diff {
-        #[arg(long, short)]
+        /// Target pattern to match hosts (default: all)
+        #[arg(long, short, default_value = "all")]
         targets: String,
+
+        #[arg(long, default_value = "100")]
+        limit: usize,
+
+        #[arg(long, default_value = "0")]
+        offset: usize,
+
+        #[arg(long)]
+        fields: Option<String>,
     },
     /// Verify targets match desired state (exit code only)
     Check {
-        #[arg(long, short)]
+        /// Target pattern to match hosts (default: all)
+        #[arg(long, short, default_value = "all")]
         targets: String,
     },
     /// Print resource type schemas as JSON
@@ -67,13 +88,42 @@ enum Command {
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
-    let output = OutputConfig::new(cli.json);
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            // Help and version requests are not errors; let clap handle them normally.
+            if e.kind() == clap::error::ErrorKind::DisplayHelp
+                || e.kind() == clap::error::ErrorKind::DisplayVersion
+            {
+                e.exit();
+            }
+            // Clap parse errors (unknown subcommand, missing required arg, etc.)
+            // emit the structured error envelope as the last line of stderr so
+            // consumers can branch on `kind` without parsing prose.
+            let envelope = serde_json::json!({
+                "error": {
+                    "kind": "invalid_config",
+                    "message": e.to_string().trim().to_string()
+                }
+            });
+            // Print clap's human-friendly message first, then the envelope last.
+            eprint!("{e}");
+            eprintln!("{}", serde_json::to_string(&envelope).unwrap());
+            process::exit(e.exit_code());
+        }
+    };
+    let output = OutputConfig::new(cli.output.clone(), cli.json);
 
     let code = match run(cli, &output).await {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("Error: {e}");
+            let envelope = serde_json::json!({
+                "error": {
+                    "kind": e.kind_str(),
+                    "message": e.to_string()
+                }
+            });
+            eprintln!("{}", serde_json::to_string(&envelope).unwrap());
             e.exit_code()
         }
     };
@@ -90,15 +140,20 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
             )?;
-            commands::apply::run(&engine, &base_dir, &targets, output).await
+            commands::apply::run(&engine, &base_dir, &targets, cli.yes, output).await
         }
-        Command::Diff { targets } => {
+        Command::Diff {
+            targets,
+            limit,
+            offset,
+            fields,
+        } => {
             let engine = build_engine(
                 cli.parallel.into(),
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
             )?;
-            commands::diff::run(&engine, &base_dir, &targets, output).await
+            commands::diff::run(&engine, &base_dir, &targets, limit, offset, fields, output).await
         }
         Command::Check { targets } => {
             let engine = build_engine(

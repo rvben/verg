@@ -57,8 +57,14 @@ impl Engine {
         let selector = selector::parse_selector(target_selector)?;
         let hosts = inventory.filter(&selector)?;
 
-        if hosts.is_empty() {
+        // A non-empty selector that matches nothing is an error. The "all"
+        // selector on an empty inventory is valid (nothing to do).
+        if hosts.is_empty() && !matches!(selector, crate::inventory::selector::Selector::All) {
             return Err(Error::TargetNotFound(target_selector.into()));
+        }
+
+        if hosts.is_empty() {
+            return Ok(EngineResult { summaries: vec![] });
         }
 
         let state_dir = base_dir.join("state");
