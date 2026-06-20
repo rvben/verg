@@ -342,20 +342,9 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::resources::ResolvedResource;
 
     fn make_resource(name: &str, props: HashMap<String, toml::Value>) -> ResolvedResource {
-        ResolvedResource {
-            resource_type: "cron".into(),
-            name: name.into(),
-            props,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        }
+        crate::resources::test_resource("cron", name, props)
     }
 
     #[test]
@@ -520,17 +509,7 @@ mod tests {
         for (k, v) in props {
             map.insert((*k).to_string(), v.clone());
         }
-        ResolvedResource {
-            resource_type: "cron".into(),
-            name: "testjob".into(),
-            props: map,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        }
+        crate::resources::test_resource("cron", "testjob", map)
     }
 
     #[test]

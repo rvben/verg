@@ -82,17 +82,9 @@ mod tests {
     use super::*;
 
     fn res(rtype: &str, name: &str, after: &[&str]) -> ResolvedResource {
-        ResolvedResource {
-            resource_type: rtype.into(),
-            name: name.into(),
-            props: HashMap::new(),
-            after: after.iter().map(|s| s.to_string()).collect(),
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        }
+        let mut r = crate::resources::test_resource(rtype, name, HashMap::new());
+        r.after = after.iter().map(|s| s.to_string()).collect();
+        r
     }
 
     #[test]

@@ -89,17 +89,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn resource(name: &str, props: HashMap<String, toml::Value>) -> ResolvedResource {
-        ResolvedResource {
-            resource_type: "file".into(),
-            name: name.into(),
-            props,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        }
+        crate::resources::test_resource("file", name, props)
     }
 
     #[test]

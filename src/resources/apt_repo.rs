@@ -106,17 +106,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
-        ResolvedResource {
-            resource_type: "apt_repo".into(),
-            name: "t".into(),
-            props,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        }
+        crate::resources::test_resource("apt_repo", "t", props)
     }
 
     #[test]

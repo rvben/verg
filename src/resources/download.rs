@@ -321,17 +321,7 @@ mod tests {
             toml::Value::String("/opt/mytool".into()),
         );
         props.insert("extract".to_string(), toml::Value::Boolean(true));
-        let r = ResolvedResource {
-            resource_type: "download".into(),
-            name: "mytool".into(),
-            props,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        };
+        let r = crate::resources::test_resource("download", "mytool", props);
         let err = execute(&r, true).unwrap_err();
         assert!(err.to_string().contains("checksum"), "got: {err}");
     }

@@ -351,6 +351,25 @@ pub fn run_cmd_with_stdin(
 }
 
 #[cfg(test)]
+pub(crate) fn test_resource(
+    resource_type: &str,
+    name: &str,
+    props: std::collections::HashMap<String, toml::Value>,
+) -> ResolvedResource {
+    ResolvedResource {
+        resource_type: resource_type.to_string(),
+        name: name.to_string(),
+        props,
+        after: vec![],
+        notify: vec![],
+        when: None,
+        handler: false,
+        register: None,
+        sensitive: false,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -359,17 +378,7 @@ mod tests {
         let mut props = HashMap::new();
         props.insert("name".to_string(), toml::Value::String("nginx".into()));
         props.insert("enabled".to_string(), toml::Value::Boolean(true));
-        let r = ResolvedResource {
-            resource_type: "service".into(),
-            name: "nginx".into(),
-            props,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        };
+        let r = test_resource("service", "nginx", props);
         assert_eq!(r.prop_str("name"), Some("nginx"));
         assert_eq!(r.prop_str("missing"), None);
         assert_eq!(r.prop_str_or("missing", "present"), "present");
@@ -555,17 +564,7 @@ mod tests {
 
     #[test]
     fn resolved_resource_fqn() {
-        let r = ResolvedResource {
-            resource_type: "pkg".into(),
-            name: "nginx".into(),
-            props: HashMap::new(),
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        };
+        let r = test_resource("pkg", "nginx", HashMap::new());
         assert_eq!(r.fqn(), "pkg.nginx");
     }
 }

@@ -103,17 +103,7 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.clone()))
             .collect();
         p.insert("command".into(), toml::Value::String(command.into()));
-        ResolvedResource {
-            resource_type: "cmd".into(),
-            name: name.into(),
-            props: p,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        }
+        crate::resources::test_resource("cmd", name, p)
     }
 
     #[test]

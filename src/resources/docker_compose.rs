@@ -122,17 +122,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
-        ResolvedResource {
-            resource_type: "docker_compose".into(),
-            name: "t".into(),
-            props,
-            after: vec![],
-            notify: vec![],
-            when: None,
-            handler: false,
-            register: None,
-            sensitive: false,
-        }
+        crate::resources::test_resource("docker_compose", "t", props)
     }
 
     #[test]
