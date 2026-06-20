@@ -101,7 +101,7 @@ ssh -F "$SSH_CONFIG" verg-e2e "mkdir -p /usr/local/share/verg && echo '$VERSION'
 
 info "Test 1: verg diff..."
 DIFF_EXIT=0
-DIFF_OUTPUT=$("$VERG" diff --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>&1) || DIFF_EXIT=$?
+DIFF_OUTPUT=$("$VERG" diff --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --host-key-checking no --ssh-known-hosts /dev/null --targets all --json 2>&1) || DIFF_EXIT=$?
 if [ "$DIFF_EXIT" -ge 2 ]; then
     fail "diff exited with error code $DIFF_EXIT"
 fi
@@ -115,14 +115,14 @@ info "  diff returned valid JSON (exit $DIFF_EXIT)"
 
 info "Test 2: verg apply..."
 APPLY_EXIT=0
-APPLY_OUTPUT=$("$VERG" apply --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>/dev/null) || APPLY_EXIT=$?
+APPLY_OUTPUT=$("$VERG" apply --yes --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --host-key-checking no --ssh-known-hosts /dev/null --targets all --json 2>/dev/null) || APPLY_EXIT=$?
 if [ "$APPLY_EXIT" -ge 2 ]; then
     fail "apply exited with error code $APPLY_EXIT"
 fi
 echo "$APPLY_OUTPUT" | python3 -m json.tool > /dev/null 2>&1 || fail "apply output is not valid JSON"
 
 # Check that changes were made
-CHANGED=$(echo "$APPLY_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['summary']['changed'])" 2>/dev/null)
+CHANGED=$(echo "$APPLY_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['summary']['changed'])" 2>/dev/null)
 if [ "$CHANGED" = "0" ]; then
     fail "apply reported 0 changes on first run"
 fi
@@ -151,11 +151,11 @@ info "  /tmp/verg-marker: exists"
 
 info "Test 4: idempotency (second apply)..."
 APPLY2_EXIT=0
-APPLY2_OUTPUT=$("$VERG" apply --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json 2>/dev/null) || APPLY2_EXIT=$?
+APPLY2_OUTPUT=$("$VERG" apply --yes --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --host-key-checking no --ssh-known-hosts /dev/null --targets all --json 2>/dev/null) || APPLY2_EXIT=$?
 if [ "$APPLY2_EXIT" -ge 2 ]; then
     fail "second apply exited with error code $APPLY2_EXIT"
 fi
-CHANGED2=$(echo "$APPLY2_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['summary']['changed'])" 2>/dev/null)
+CHANGED2=$(echo "$APPLY2_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['items'][0]['summary']['changed'])" 2>/dev/null)
 if [ "$CHANGED2" != "0" ]; then
     warn "  second apply reported $CHANGED2 change(s) — not fully idempotent"
     echo "$APPLY2_OUTPUT" | python3 -m json.tool
@@ -167,7 +167,7 @@ fi
 
 info "Test 5: verg check..."
 CHECK_EXIT=0
-"$VERG" check --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --targets all --json > /dev/null 2>&1 || CHECK_EXIT=$?
+"$VERG" check --path "$SCRIPT_DIR/fixture" --ssh-config "$SSH_CONFIG" --host-key-checking no --ssh-known-hosts /dev/null --targets all --json > /dev/null 2>&1 || CHECK_EXIT=$?
 if [ "$CHECK_EXIT" -ge 2 ]; then
     fail "check exited with failure code $CHECK_EXIT (expected 0 or 1)"
 fi
