@@ -99,6 +99,14 @@ impl SshTransport {
                 self.host_key_checking.as_ssh_value()
             ),
         ];
+        args.extend([
+            "-o".into(),
+            "ConnectTimeout=10".into(),
+            "-o".into(),
+            "ServerAliveInterval=15".into(),
+            "-o".into(),
+            "ServerAliveCountMax=3".into(),
+        ]);
         if let Some(file) = &self.known_hosts {
             args.push("-o".into());
             args.push(format!("UserKnownHostsFile={}", file.to_string_lossy()));
@@ -123,7 +131,7 @@ impl SshTransport {
         if let Some(p) = port {
             args.extend(["-p".into(), p.to_string()]);
         }
-        args.extend(["-o".into(), "ConnectTimeout=10".into(), target]);
+        args.push(target);
         args.push(
             "echo \"arch=$(uname -m)\" && \
              echo \"hostname=$(hostname)\" && \
@@ -209,7 +217,7 @@ impl SshTransport {
         })?;
 
         let output = Command::new("curl")
-            .args(["-fSL", "--progress-bar", "-o"])
+            .args(["-fSL", "--progress-bar", "-m", "300", "-o"])
             .arg(&cached)
             .arg(&url)
             .output()
@@ -262,7 +270,7 @@ impl SshTransport {
         if let Some(p) = port {
             args.extend(["-p".into(), p.to_string()]);
         }
-        args.extend(["-o".into(), "ConnectTimeout=10".into(), target]);
+        args.push(target);
         args.push(format!("cat {VERSION_PATH} 2>/dev/null"));
 
         let output = Command::new("ssh")
@@ -287,8 +295,6 @@ impl SshTransport {
             args.extend(["-p".into(), p.to_string()]);
         }
         args.extend([
-            "-o".into(),
-            "ConnectTimeout=10".into(),
             target,
             format!("sha256sum {AGENT_PATH} 2>/dev/null || true"),
         ]);
@@ -527,5 +533,14 @@ mod tests {
         assert!(!super::should_push(true, Some("a"), "a")); // installed matches -> skip
         assert!(super::should_push(true, Some("a"), "b")); // mismatch -> repush
         assert!(super::should_push(true, Some("a"), "")); // remote absent -> repush
+    }
+
+    #[test]
+    fn base_args_include_timeout_options() {
+        let t = SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into());
+        let joined = t.ssh_base_args().join(" ");
+        assert!(joined.contains("ConnectTimeout=10"), "got: {joined}");
+        assert!(joined.contains("ServerAliveInterval=15"), "got: {joined}");
+        assert!(joined.contains("ServerAliveCountMax=3"), "got: {joined}");
     }
 }
