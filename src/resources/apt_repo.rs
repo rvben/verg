@@ -1,8 +1,30 @@
 use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
+
+/// Cache for the distribution suite detected via `lsb_release -cs`. The
+/// distro suite is invariant for the lifetime of the agent process, so we
+/// run the probe at most once. `Ok` holds the suite string; `Err` holds the
+/// exact error message so we can reconstruct an identical `Error::Resource`
+/// on cache hits.
+static SUITE_CACHE: OnceLock<Result<String, String>> = OnceLock::new();
+
+fn detect_suite() -> Result<String, Error> {
+    let cached = SUITE_CACHE.get_or_init(|| {
+        let output = match run_cmd("lsb_release", &["-cs"]) {
+            Ok(o) => o,
+            Err(e) => return Err(e.to_string()),
+        };
+        if !output.status.success() {
+            return Err("failed to detect distribution suite via lsb_release -cs".to_string());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    });
+    cached.clone().map_err(Error::Resource)
+}
 
 /// Manages an APT repository with GPG key.
 ///
@@ -42,13 +64,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     let suite = if let Some(s) = resource.props.get("suite").and_then(|v| v.as_str()) {
         s.to_string()
     } else {
-        let output = run_cmd("lsb_release", &["-cs"])?;
-        if !output.status.success() {
-            return Err(Error::Resource(
-                "failed to detect distribution suite via lsb_release -cs".into(),
-            ));
-        }
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
+        detect_suite()?
     };
 
     let mut changes = Vec::new();

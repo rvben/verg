@@ -1,25 +1,35 @@
+use std::sync::OnceLock;
+
 use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum PkgManager {
     Apt,
     Dnf,
     Pacman,
 }
 
+/// Cache for the detected package manager. `None` means detection ran and
+/// found no supported manager. The host's package manager is invariant for
+/// the lifetime of the agent process.
+static PKG_MANAGER_CACHE: OnceLock<Option<PkgManager>> = OnceLock::new();
+
 fn detect_pkg_manager() -> Result<PkgManager, Error> {
-    if run_cmd("which", &["apt-get"]).is_ok_and(|o| o.status.success()) {
-        return Ok(PkgManager::Apt);
-    }
-    if run_cmd("which", &["dnf"]).is_ok_and(|o| o.status.success()) {
-        return Ok(PkgManager::Dnf);
-    }
-    if run_cmd("which", &["pacman"]).is_ok_and(|o| o.status.success()) {
-        return Ok(PkgManager::Pacman);
-    }
-    Err(Error::Resource("no supported package manager found".into()))
+    let cached = PKG_MANAGER_CACHE.get_or_init(|| {
+        if run_cmd("which", &["apt-get"]).is_ok_and(|o| o.status.success()) {
+            return Some(PkgManager::Apt);
+        }
+        if run_cmd("which", &["dnf"]).is_ok_and(|o| o.status.success()) {
+            return Some(PkgManager::Dnf);
+        }
+        if run_cmd("which", &["pacman"]).is_ok_and(|o| o.status.success()) {
+            return Some(PkgManager::Pacman);
+        }
+        None
+    });
+    cached.ok_or_else(|| Error::Resource("no supported package manager found".into()))
 }
 
 /// True only when `dpkg -s` reports a fully-installed package. `dpkg -s`
@@ -180,5 +190,23 @@ mod tests {
     #[test]
     fn dpkg_empty_output_is_not_installed() {
         assert!(!dpkg_reports_installed(""));
+    }
+
+    #[test]
+    fn detect_pkg_manager_returns_same_value_on_repeated_calls() {
+        // The OnceLock must return the same result on every call within a process.
+        // We can't predict which manager (or None) is present on this host, but
+        // we can assert that two calls produce identical outcomes.
+        let first = detect_pkg_manager();
+        let second = detect_pkg_manager();
+        match (first, second) {
+            (Ok(a), Ok(b)) => assert_eq!(a, b, "cached manager should match"),
+            (Err(a), Err(b)) => assert_eq!(
+                a.to_string(),
+                b.to_string(),
+                "cached error message should match"
+            ),
+            _ => panic!("detect_pkg_manager returned different Ok/Err variants on repeated calls"),
+        }
     }
 }
