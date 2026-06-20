@@ -40,12 +40,14 @@ pub fn print_result(result: &EngineResult, output: &OutputConfig, out: &mut impl
         let _ = writeln!(out, "{json}");
     } else {
         for summary in &result.summaries {
-            for r in &summary.resources {
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    format_resource_line(&summary.host, r, output.color)
-                );
+            if !output.quiet {
+                for r in &summary.resources {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        format_resource_line(&summary.host, r, output.color)
+                    );
+                }
             }
             let _ = writeln!(
                 out,
@@ -140,13 +142,37 @@ mod tests {
 
     #[test]
     fn print_result_writes_to_the_given_writer() {
-        // Text mode (not a TTY in tests), no color.
-        let output = OutputConfig::new(crate::output::OutputFormat::Text, false);
+        // Text mode (not a TTY in tests), no color, quiet=false shows per-resource lines.
+        let output = OutputConfig::new(crate::output::OutputFormat::Text, false, false);
         let mut buf: Vec<u8> = Vec::new();
         print_result(&engine_result(), &output, &mut buf);
         let s = String::from_utf8(buf).unwrap();
         assert!(s.contains("web1"), "host missing from output: {s}");
-        assert!(s.contains("pkg.nginx"), "resource missing: {s}");
+        assert!(
+            s.contains("pkg.nginx"),
+            "resource line missing when quiet=false: {s}"
+        );
         assert!(s.contains("changed"), "status missing: {s}");
+    }
+
+    #[test]
+    fn quiet_suppresses_resource_lines_but_keeps_summary() {
+        let output = OutputConfig::new(crate::output::OutputFormat::Text, false, true);
+        let mut buf: Vec<u8> = Vec::new();
+        print_result(&engine_result(), &output, &mut buf);
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            !s.contains("pkg.nginx"),
+            "per-resource line must be absent when quiet=true: {s}"
+        );
+        assert!(
+            !s.contains("installed"),
+            "per-resource detail must be absent when quiet=true: {s}"
+        );
+        assert!(
+            s.contains("1 changed"),
+            "summary must still appear when quiet=true: {s}"
+        );
+        assert!(s.contains("web1"), "host must still appear in summary: {s}");
     }
 }

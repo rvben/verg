@@ -81,12 +81,13 @@ fn project_resource(
     }
 }
 
-fn print_diff(
+fn write_diff(
     result: &EngineResult,
     limit: usize,
     offset: usize,
     fields: Option<String>,
     output: &OutputConfig,
+    out: &mut impl std::io::Write,
 ) {
     let total = result.summaries.len();
     let page = paginate(&result.summaries, limit, offset);
@@ -105,39 +106,60 @@ fn print_diff(
         let envelope =
             serde_json::json!({"items": items, "total": total, "limit": limit, "offset": offset});
         let json = serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_string());
-        println!("{json}");
+        let _ = writeln!(out, "{json}");
     } else {
         if page.is_empty() {
-            println!("no hosts matched");
+            let _ = writeln!(out, "no hosts matched");
         }
         for summary in page {
-            for r in &summary.resources {
-                if !is_pending_change(r.status.clone()) {
-                    continue;
+            if !output.quiet {
+                for r in &summary.resources {
+                    if !is_pending_change(r.status.clone()) {
+                        continue;
+                    }
+                    let _ = writeln!(out, "{}", diff_line(&summary.host, r));
                 }
-                println!("{}", diff_line(&summary.host, r));
             }
             if summary.summary.failed > 0 {
-                println!(
+                let _ = writeln!(
+                    out,
                     "{}: {} would change, {} FAILED",
                     summary.host, summary.summary.changed, summary.summary.failed
                 );
             } else if summary.summary.changed > 0 {
-                println!(
+                let _ = writeln!(
+                    out,
                     "{}: {} resource(s) would change",
                     summary.host, summary.summary.changed
                 );
             } else {
-                println!("{}: no changes needed", summary.host);
+                let _ = writeln!(out, "{}: no changes needed", summary.host);
             }
         }
     }
 }
 
+fn print_diff(
+    result: &EngineResult,
+    limit: usize,
+    offset: usize,
+    fields: Option<String>,
+    output: &OutputConfig,
+) {
+    write_diff(
+        result,
+        limit,
+        offset,
+        fields,
+        output,
+        &mut std::io::stdout(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resources::{ResourceResult, ResourceStatus};
+    use crate::resources::{ResourceResult, ResourceStatus, RunSummary};
 
     fn res(status: ResourceStatus, diff: Option<&str>, error: Option<&str>) -> ResourceResult {
         ResourceResult {
@@ -149,6 +171,15 @@ mod tests {
             to: None,
             error: error.map(String::from),
             output: None,
+        }
+    }
+
+    fn engine_result_with_change() -> EngineResult {
+        EngineResult {
+            summaries: vec![RunSummary::from_results(
+                "web1",
+                vec![res(ResourceStatus::Changed, Some("mode 0755"), None)],
+            )],
         }
     }
 
@@ -215,5 +246,59 @@ mod tests {
         assert!(obj.contains_key("diff"), "requested field kept");
         assert!(!obj.contains_key("status"), "unrequested field dropped");
         assert!(!obj.contains_key("from"), "unrequested field dropped");
+    }
+
+    #[test]
+    fn write_diff_shows_resource_lines_when_not_quiet() {
+        let output =
+            crate::output::OutputConfig::new(crate::output::OutputFormat::Text, false, false);
+        let mut buf: Vec<u8> = Vec::new();
+        write_diff(
+            &engine_result_with_change(),
+            100,
+            0,
+            None,
+            &output,
+            &mut buf,
+        );
+        let s = String::from_utf8(buf).unwrap();
+        assert!(
+            s.contains("would change"),
+            "per-resource 'would change' line must appear when quiet=false: {s}"
+        );
+        assert!(
+            s.contains("resource(s) would change"),
+            "summary line must appear: {s}"
+        );
+    }
+
+    #[test]
+    fn write_diff_quiet_suppresses_resource_lines_keeps_summary() {
+        let output =
+            crate::output::OutputConfig::new(crate::output::OutputFormat::Text, false, true);
+        let mut buf: Vec<u8> = Vec::new();
+        write_diff(
+            &engine_result_with_change(),
+            100,
+            0,
+            None,
+            &output,
+            &mut buf,
+        );
+        let s = String::from_utf8(buf).unwrap();
+        // The per-resource diff line contains "file.x would change: mode 0755" -
+        // that detail must be absent; only the summary "resource(s) would change" remains.
+        assert!(
+            !s.contains("file.x"),
+            "per-resource name must be absent when quiet=true: {s}"
+        );
+        assert!(
+            !s.contains("mode 0755"),
+            "per-resource detail must be absent when quiet=true: {s}"
+        );
+        assert!(
+            s.contains("resource(s) would change"),
+            "summary line must still appear when quiet=true: {s}"
+        );
     }
 }

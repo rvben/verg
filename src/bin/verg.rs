@@ -146,7 +146,7 @@ async fn main() {
             process::exit(verg::error::exit_codes::INVALID_CONFIG);
         }
     };
-    let output = OutputConfig::new(cli.output.clone(), cli.json);
+    let output = OutputConfig::new(cli.output.clone(), cli.json, cli.quiet);
 
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let cancel_watch = cancel.clone();

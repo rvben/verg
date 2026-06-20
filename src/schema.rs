@@ -8,7 +8,7 @@ pub fn run() {
         "description": "Desired-state infrastructure convergence engine",
         "global_args": [
             {"name": "--output", "type": "string", "enum": ["auto", "text", "json"], "default": "auto", "description": "Output format"},
-            {"name": "--quiet", "type": "boolean", "description": "Suppress non-essential output"},
+            {"name": "--quiet", "type": "boolean", "description": "Suppress per-resource lines; print only the final summary"},
             {"name": "--path", "type": "path", "description": "Path to verg project directory"},
             {"name": "--parallel", "type": "integer", "default": 10, "description": "Maximum parallel connections"},
             {"name": "--ssh-config", "type": "path", "description": "Path to SSH config file"},
@@ -75,7 +75,9 @@ pub fn run() {
                 "name": "init",
                 "description": "Scaffold a new verg project directory",
                 "mutating": true,
-                "args": [],
+                "args": [
+                    {"name": "--force", "type": "boolean", "default": false, "description": "Overwrite existing scaffold files"}
+                ],
                 "output_fields": []
             },
             {
