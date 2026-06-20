@@ -94,7 +94,7 @@ pub fn run() {
             {"kind": "not_found", "exit_code": 6, "retryable": false, "description": "No hosts matched the given target pattern"},
             {"kind": "resource_error", "exit_code": 2, "retryable": false, "description": "One or more resources failed to converge"},
             {"kind": "internal_error", "exit_code": 7, "retryable": false, "description": "Unexpected internal error"},
-            {"kind": "confirmation_required", "exit_code": 2, "retryable": false, "description": "Operation requires confirmation; pass --yes to proceed non-interactively"},
+            {"kind": "confirmation_required", "exit_code": 5, "retryable": false, "description": "Operation requires confirmation; pass --yes to proceed non-interactively"},
             {"kind": "conflict", "exit_code": 8, "retryable": false, "description": "State conflict that cannot be automatically resolved"}
         ],
         "resource_types": resource_schemas(),

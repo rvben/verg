@@ -129,7 +129,13 @@ async fn main() {
             });
             // Print clap's human-friendly message first, then the envelope last.
             eprint!("{e}");
-            eprintln!("{}", serde_json::to_string(&envelope).unwrap());
+            eprintln!(
+                "{}",
+                serde_json::to_string(&envelope).unwrap_or_else(|_| {
+                    r#"{"error":{"kind":"internal_error","message":"serialization failed"}}"#
+                        .to_string()
+                })
+            );
             process::exit(e.exit_code());
         }
     };
@@ -144,7 +150,13 @@ async fn main() {
                     "message": e.to_string()
                 }
             });
-            eprintln!("{}", serde_json::to_string(&envelope).unwrap());
+            eprintln!(
+                "{}",
+                serde_json::to_string(&envelope).unwrap_or_else(|_| {
+                    r#"{"error":{"kind":"internal_error","message":"serialization failed"}}"#
+                        .to_string()
+                })
+            );
             e.exit_code()
         }
     };
@@ -223,9 +235,9 @@ fn build_engine(cfg: EngineConfig) -> Result<Engine, Error> {
             // Default: look next to the verg binary, then ~/.local/share/verg/agents/
             let exe_dir = std::env::current_exe()
                 .map_err(|e| Error::Other(format!("failed to get current exe: {e}")))?;
-            let beside_exe = exe_dir.parent().unwrap().join("agents");
-            if beside_exe.is_dir() {
-                beside_exe
+            let beside_exe = exe_dir.parent().map(|p| p.join("agents"));
+            if beside_exe.as_ref().is_some_and(|p| p.is_dir()) {
+                beside_exe.unwrap()
             } else {
                 dirs::data_dir()
                     .unwrap_or_else(|| PathBuf::from("/usr/local/share"))

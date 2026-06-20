@@ -34,7 +34,7 @@ pub fn print_result(result: &EngineResult, output: &OutputConfig) {
             "items": &result.summaries,
             "total": result.summaries.len()
         });
-        let json = serde_json::to_string_pretty(&envelope).unwrap();
+        let json = serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_string());
         println!("{json}");
     } else {
         for summary in &result.summaries {

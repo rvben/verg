@@ -43,7 +43,7 @@ fn print_diff(
         if let Some(f) = &fields {
             envelope["fields"] = serde_json::Value::String(f.clone());
         }
-        let json = serde_json::to_string_pretty(&envelope).unwrap();
+        let json = serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_string());
         println!("{json}");
     } else {
         if result.summaries.is_empty() {

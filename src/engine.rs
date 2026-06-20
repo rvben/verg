@@ -75,7 +75,10 @@ impl Engine {
                 let raw = std::fs::read_to_string(&path).map_err(|e| {
                     Error::Config(format!("failed to read {}: {e}", path.display()))
                 })?;
-                let source = path.file_name().unwrap().to_string_lossy().to_string();
+                let source = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 crate::config::validate_state_file_toml(&raw, &source, self.policy)?;
             }
         }

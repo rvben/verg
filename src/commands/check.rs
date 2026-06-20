@@ -16,7 +16,7 @@ pub async fn run(
             "items": &result.summaries,
             "total": result.summaries.len()
         });
-        let json = serde_json::to_string_pretty(&envelope).unwrap();
+        let json = serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_string());
         println!("{json}");
     }
     Ok(result.exit_code())

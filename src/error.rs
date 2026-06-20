@@ -47,7 +47,7 @@ impl Error {
             Error::Connection(_) => exit_codes::CONNECTION_ERROR,
             Error::TargetNotFound(_) => exit_codes::TARGET_NOT_FOUND,
             Error::Resource(_) => exit_codes::PARTIAL_FAILURE,
-            Error::ConfirmationRequired(_) => exit_codes::PARTIAL_FAILURE,
+            Error::ConfirmationRequired(_) => exit_codes::INVALID_CONFIG,
             Error::Conflict(_) => exit_codes::CONFLICT,
             Error::Io(_) | Error::Other(_) => exit_codes::INTERNAL_ERROR,
         }
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn confirmation_required_exit_code() {
         let err = Error::ConfirmationRequired("pass --yes".into());
-        assert_eq!(err.exit_code(), exit_codes::PARTIAL_FAILURE);
+        assert_eq!(err.exit_code(), exit_codes::INVALID_CONFIG);
         assert_eq!(err.kind_str(), "confirmation_required");
     }
 

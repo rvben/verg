@@ -50,7 +50,11 @@ pub fn resolve_order(resources: &[ResolvedResource]) -> Result<Vec<Vec<&Resolved
         for name in &layer_names {
             if let Some(deps) = dependents.get(name) {
                 for dep in deps {
-                    let deg = in_degree.get_mut(dep).unwrap();
+                    let Some(deg) = in_degree.get_mut(dep) else {
+                        return Err(Error::Config(format!(
+                            "internal: dependency {dep} missing from in-degree map"
+                        )));
+                    };
                     *deg -= 1;
                     if *deg == 0 {
                         queue.push_back(dep.clone());
