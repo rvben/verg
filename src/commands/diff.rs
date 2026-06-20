@@ -262,9 +262,16 @@ mod tests {
             &mut buf,
         );
         let s = String::from_utf8(buf).unwrap();
+        // Assert on the per-resource line's exclusive content ("file.x" and the
+        // "mode 0755" detail) - these appear only in the per-resource diff line,
+        // not the summary, so the assertion fails if the quiet guard is removed.
         assert!(
-            s.contains("would change"),
-            "per-resource 'would change' line must appear when quiet=false: {s}"
+            s.contains("file.x"),
+            "per-resource name must appear when quiet=false: {s}"
+        );
+        assert!(
+            s.contains("mode 0755"),
+            "per-resource detail must appear when quiet=false: {s}"
         );
         assert!(
             s.contains("resource(s) would change"),
