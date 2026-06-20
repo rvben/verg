@@ -78,8 +78,12 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             changes.push(format!("persist {key} in {conf_path}"));
             if !dry_run {
                 let new_content = rebuild_sysctl_conf(&current_conf, key, desired);
-                std::fs::write(conf_path, new_content)
-                    .map_err(|e| Error::Resource(format!("failed to write {conf_path}: {e}")))?;
+                crate::resources::atomic::write_atomic(
+                    std::path::Path::new(conf_path),
+                    new_content.as_bytes(),
+                    None,
+                )
+                .map_err(|e| Error::Resource(format!("failed to write {conf_path}: {e}")))?;
             }
         }
     }

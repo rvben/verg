@@ -14,6 +14,10 @@ use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
 ///   component - Repository component (default: "stable")
 ///   arch     - Architecture (default: "amd64")
 ///   state    - "present" or "absent" (default: "present")
+///
+/// GPG key rotation: the key file is only re-fetched when absent. To rotate a
+/// signing key, apply the resource with `state = "absent"` (removes the keyring
+/// and list) and then `state = "present"` to fetch the new key.
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let name = resource
         .props
@@ -101,8 +105,13 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     if needs_update {
         changes.push(format!("repo → {list_path}"));
         if !dry_run {
-            std::fs::write(&list_path, format!("{repo_line}\n"))
-                .map_err(|e| Error::Resource(format!("failed to write {list_path}: {e}")))?;
+            let body = format!("{repo_line}\n");
+            crate::resources::atomic::write_atomic(
+                std::path::Path::new(&list_path),
+                body.as_bytes(),
+                None,
+            )
+            .map_err(|e| Error::Resource(format!("failed to write {list_path}: {e}")))?;
             // Update package lists
             let output = run_cmd("apt-get", &["update", "-qq"])?;
             if !output.status.success() {

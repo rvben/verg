@@ -40,7 +40,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                     std::fs::create_dir_all(parent)
                         .map_err(|e| Error::Resource(format!("failed to create dir: {e}")))?;
                 }
-                std::fs::write(target, desired)
+                crate::resources::atomic::write_atomic(target, desired.as_bytes(), None)
                     .map_err(|e| Error::Resource(format!("failed to write {path}: {e}")))?;
             }
         }

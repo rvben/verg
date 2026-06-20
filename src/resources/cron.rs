@@ -337,12 +337,13 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     }
 
     if !content_ok {
-        std::fs::write(target, &desired)
+        crate::resources::atomic::write_atomic(target, desired.as_bytes(), Some(CRON_MODE))
             .map_err(|e| Error::Resource(format!("failed to write {cron_path}: {e}")))?;
+    } else {
+        // Content already correct; only the mode drifted.
+        std::fs::set_permissions(target, std::fs::Permissions::from_mode(CRON_MODE))
+            .map_err(|e| Error::Resource(format!("failed to chmod {cron_path}: {e}")))?;
     }
-    // Always enforce 0644 — crond silently ignores world-writable files
-    std::fs::set_permissions(target, std::fs::Permissions::from_mode(CRON_MODE))
-        .map_err(|e| Error::Resource(format!("failed to chmod {cron_path}: {e}")))?;
 
     let diff = if !content_ok {
         format!("wrote {cron_path}")
