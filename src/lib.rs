@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod agent_checksums;
 pub mod bundle;
 pub mod changelog;
 pub mod commands;
