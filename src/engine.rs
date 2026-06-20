@@ -123,6 +123,11 @@ impl Engine {
                         .gather_facts(&host.user, &host.address, host.port)
                         .await?;
 
+                    let arch = facts
+                        .get("fact.arch")
+                        .cloned()
+                        .unwrap_or_else(|| "x86_64".into());
+
                     let mut host = host;
                     // Inject facts as variables (fact.arch, fact.hostname, etc.)
                     for (k, v) in &facts {
@@ -139,7 +144,14 @@ impl Engine {
 
                     let bundle = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
                     let result = transport
-                        .execute(&host.user, &host.address, host.port, &bundle, dry_run)
+                        .execute(
+                            &host.user,
+                            &host.address,
+                            host.port,
+                            &bundle,
+                            dry_run,
+                            &arch,
+                        )
                         .await?;
                     Ok::<RunSummary, Error>(result.summary)
                 };

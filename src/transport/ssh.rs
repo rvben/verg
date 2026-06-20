@@ -10,6 +10,18 @@ use crate::resources::RunSummary;
 use super::ExecResult;
 
 const AGENT_PATH: &str = "/usr/local/bin/verg-agent";
+
+/// Bound a possibly-huge string for inclusion in an error message.
+fn truncate_for_error(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}... ({} bytes total)", &s[..end], s.len())
+}
 const VERSION_PATH: &str = "/usr/local/share/verg/version";
 
 /// SSH host key checking policy passed to StrictHostKeyChecking.
@@ -410,15 +422,10 @@ impl SshTransport {
         port: Option<u16>,
         bundle: &Bundle,
         dry_run: bool,
+        arch: &str,
     ) -> Result<ExecResult, Error> {
-        let facts = self.gather_facts(user, address, port).await?;
-        let arch = facts
-            .get("fact.arch")
-            .cloned()
-            .unwrap_or_else(|| "x86_64".into());
-
         let has_version = self.check_version(user, address, port).await?;
-        let arch_target = Self::arch_to_target(&arch)?;
+        let arch_target = Self::arch_to_target(arch)?;
         let expected = if self.skip_agent_checksum {
             None
         } else {
@@ -431,7 +438,7 @@ impl SshTransport {
             should_push(has_version, expected, "")
         };
         if needs_push {
-            let agent_binary = self.agent_binary_for_arch(&arch).await?;
+            let agent_binary = self.agent_binary_for_arch(arch).await?;
             self.push_binary(user, address, port, &agent_binary, expected)
                 .await?;
         }
@@ -475,7 +482,8 @@ impl SshTransport {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let summary: RunSummary = serde_json::from_str(&stdout).map_err(|e| {
             Error::Other(format!(
-                "failed to parse agent output: {e}\nraw output: {stdout}"
+                "failed to parse agent output: {e}\nraw output: {}",
+                truncate_for_error(&stdout, 512)
             ))
         })?;
 
@@ -543,5 +551,28 @@ mod tests {
         assert!(joined.contains("ConnectTimeout=10"), "got: {joined}");
         assert!(joined.contains("ServerAliveInterval=15"), "got: {joined}");
         assert!(joined.contains("ServerAliveCountMax=3"), "got: {joined}");
+    }
+
+    #[test]
+    fn truncate_for_error_bounds_output() {
+        assert_eq!(truncate_for_error("short", 512), "short");
+        let big = "x".repeat(2000);
+        let out = truncate_for_error(&big, 512);
+        assert!(out.len() < big.len(), "should be truncated");
+        assert!(out.contains("2000 bytes total"), "got: {out}");
+    }
+
+    #[test]
+    fn truncate_for_error_respects_char_boundary() {
+        // 10 ASCII bytes then a 3-byte char; max=11 lands INSIDE that char.
+        // A naive &s[..11] would panic; the helper must back off to byte 10.
+        let s = "a".repeat(10) + "\u{20AC}"; // euro sign, 3 bytes (bytes 10..13)
+        let out = truncate_for_error(&s, 11);
+        // Must not panic, and the kept prefix is exactly the 10 'a's.
+        assert!(out.starts_with(&"a".repeat(10)));
+        assert!(
+            !out.contains('\u{20AC}'),
+            "the split multibyte char must be dropped"
+        );
     }
 }
