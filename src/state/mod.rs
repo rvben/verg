@@ -60,7 +60,9 @@ pub fn load_state_dir(dir: &Path) -> Result<Vec<StateFile>, Error> {
     }
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .map_err(|e| Error::Config(format!("failed to read {}: {e}", dir.display())))?
-        .filter_map(|e| e.ok())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| Error::Config(format!("failed to read entry in {}: {e}", dir.display())))?
+        .into_iter()
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "toml"))
         .collect();
     entries.sort_by_key(|e| e.path());

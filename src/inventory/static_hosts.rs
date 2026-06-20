@@ -27,11 +27,35 @@ struct HostsFile {
     hosts: HashMap<String, HostDef>,
 }
 
+/// Reject host fields that could inject ssh options or shell metacharacters.
+pub fn validate_host_field(label: &str, value: &str) -> Result<(), Error> {
+    if value.starts_with('-') {
+        return Err(Error::Config(format!(
+            "host {label} '{value}' must not start with '-' (would be parsed as an ssh option)"
+        )));
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '@' | '-'))
+    {
+        return Err(Error::Config(format!(
+            "host {label} '{value}' contains invalid characters (allowed: alphanumerics . _ : @ -)"
+        )));
+    }
+    Ok(())
+}
+
 pub fn load_hosts(path: &Path) -> Result<HashMap<String, HostDef>, Error> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| Error::Config(format!("failed to read {}: {e}", path.display())))?;
     let file: HostsFile = toml::from_str(&content)
         .map_err(|e| Error::Parse(format!("failed to parse {}: {e}", path.display())))?;
+    for (name, def) in &file.hosts {
+        validate_host_field("user", &def.user)
+            .map_err(|e| Error::Config(format!("host '{name}': {e}")))?;
+        validate_host_field("address", &def.address)
+            .map_err(|e| Error::Config(format!("host '{name}': {e}")))?;
+    }
     Ok(file.hosts)
 }
 
@@ -128,5 +152,13 @@ address = "192.168.1.10"
     fn missing_hosts_file_returns_config_error() {
         let result = load_hosts(Path::new("/nonexistent/hosts.toml"));
         assert!(matches!(result, Err(Error::Config(_))));
+    }
+
+    #[test]
+    fn rejects_option_like_address() {
+        assert!(validate_host_field("address", "-oProxyCommand=evil").is_err());
+        assert!(validate_host_field("user", "root; rm -rf /").is_err());
+        assert!(validate_host_field("address", "192.0.2.10").is_ok());
+        assert!(validate_host_field("user", "deploy_user").is_ok());
     }
 }

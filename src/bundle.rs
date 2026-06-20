@@ -174,8 +174,15 @@ fn build_resource(
 
     if let Some(toml::Value::Table(var_overrides)) = props.remove("vars") {
         for (k, v) in var_overrides {
-            if let toml::Value::String(s) = &v {
-                let interpolated = vars::render_with_globals(jinja, s, &host.vars, inventory_ctx)?;
+            let as_string = match &v {
+                toml::Value::String(s) => Some(s.clone()),
+                toml::Value::Integer(i) => Some(i.to_string()),
+                toml::Value::Float(f) => Some(f.to_string()),
+                toml::Value::Boolean(b) => Some(b.to_string()),
+                _ => None, // tables/arrays/datetimes are not valid scalar vars
+            };
+            if let Some(s) = as_string {
+                let interpolated = vars::render_with_globals(jinja, &s, &host.vars, inventory_ctx)?;
                 props.entry(k).or_insert(toml::Value::String(interpolated));
             }
         }
@@ -737,6 +744,24 @@ template = true
         let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
         let env_content = bundle.resources[0].props["env_content"].as_str().unwrap();
         assert_eq!(env_content, "PORT=80\nROOT=/var/www");
+    }
+
+    #[test]
+    fn inline_vars_coerces_scalar() {
+        // The vars block inserts each entry as a resource PROP (after the main
+        // string-prop interpolation pass), so assert the scalar became a string
+        // prop instead of being silently dropped. It does not feed `content`.
+        let host = test_host();
+        let files = vec![parse_state(
+            "[resource.file.conf]\npath = \"/etc/x\"\n[resource.file.conf.vars]\np = 8080\n",
+        )];
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        assert_eq!(
+            bundle.resources[0].props.get("p"),
+            Some(&toml::Value::String("8080".into())),
+            "scalar inline var should be coerced to a string prop, not dropped"
+        );
     }
 
     #[test]
