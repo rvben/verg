@@ -117,6 +117,7 @@ fn build_resource(
     let mut when = None;
     let mut handler = false;
     let mut register = None;
+    let mut sensitive = false;
     let mut register_refs = Vec::new();
 
     for (key, value) in &decl.props {
@@ -147,6 +148,10 @@ fn build_resource(
         } else if key == "handler" {
             if let toml::Value::Boolean(b) = value {
                 handler = *b;
+            }
+        } else if key == "sensitive" {
+            if let toml::Value::Boolean(b) = value {
+                sensitive = *b;
             }
         } else if key == "register" {
             if let toml::Value::String(s) = value {
@@ -241,6 +246,7 @@ fn build_resource(
         when,
         handler,
         register,
+        sensitive,
     };
 
     Ok((resource, register_refs))
@@ -570,6 +576,17 @@ source = "files/raw.conf"
             bundle.resources[0].props["content"],
             toml::Value::String("{{ not_rendered }}".into())
         );
+    }
+
+    #[test]
+    fn bundle_parses_sensitive_flag() {
+        let host = test_host();
+        let files = vec![parse_state(
+            "[resource.cmd.secret]\ncommand = \"true\"\ncreates = \"/x\"\nsensitive = true\n",
+        )];
+        let bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        assert!(bundle.resources[0].sensitive);
     }
 
     #[test]

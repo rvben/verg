@@ -128,6 +128,7 @@ mod tests {
             when: None,
             handler: false,
             register: None,
+            sensitive: false,
         }
     }
 

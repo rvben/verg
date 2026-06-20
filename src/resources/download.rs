@@ -413,6 +413,7 @@ mod tests {
             when: None,
             handler: false,
             register: None,
+            sensitive: false,
         };
         let err = execute(&r, true).unwrap_err();
         assert!(err.to_string().contains("checksum"), "got: {err}");

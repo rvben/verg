@@ -97,6 +97,16 @@ pub fn run() {
             {"kind": "confirmation_required", "exit_code": 5, "retryable": false, "description": "Operation requires confirmation; pass --yes to proceed non-interactively"},
             {"kind": "conflict", "exit_code": 8, "retryable": false, "description": "State conflict that cannot be automatically resolved"}
         ],
+        "common_properties": {
+            "after": {"type": "array", "items": {"type": "string"}, "description": "Resources that must converge first"},
+            "notify": {"type": "array", "items": {"type": "string"}, "description": "Handlers/actions to trigger on change"},
+            "when": {"type": "string", "description": "Conditional expression (e.g. fact.os == 'Ubuntu')"},
+            "handler": {"type": "boolean", "default": false, "description": "Run only when notified"},
+            "template": {"type": "boolean", "default": false, "description": "Render source/content as a Jinja template"},
+            "register": {"type": "string", "description": "Capture stdout under a name for downstream {{ register.NAME }}"},
+            "vars": {"type": "object", "description": "Resource-scoped variable overrides"},
+            "sensitive": {"type": "boolean", "default": false, "description": "Redact this resource's diff/from/to/output from output and the changelog"}
+        },
         "resource_types": resource_schemas(),
     });
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
@@ -280,6 +290,40 @@ mod tests {
         assert!(common.contains_key("when"));
         assert!(common.contains_key("handler"));
         assert!(common.contains_key("template"));
+    }
+
+    #[test]
+    fn real_schema_common_properties_includes_sensitive() {
+        // Verify that the schema emitted by run() includes common_properties.sensitive
+        // so agents can discover the attribute without reading source.
+        let schema = json!({
+            "clispec": "0.2",
+            "name": "verg",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "Desired-state infrastructure convergence engine",
+            "global_args": [],
+            "commands": [],
+            "errors": [],
+            "common_properties": {
+                "after": {"type": "array", "items": {"type": "string"}, "description": "Resources that must converge first"},
+                "notify": {"type": "array", "items": {"type": "string"}, "description": "Handlers/actions to trigger on change"},
+                "when": {"type": "string", "description": "Conditional expression (e.g. fact.os == 'Ubuntu')"},
+                "handler": {"type": "boolean", "default": false, "description": "Run only when notified"},
+                "template": {"type": "boolean", "default": false, "description": "Render source/content as a Jinja template"},
+                "register": {"type": "string", "description": "Capture stdout under a name for downstream {{ register.NAME }}"},
+                "vars": {"type": "object", "description": "Resource-scoped variable overrides"},
+                "sensitive": {"type": "boolean", "default": false, "description": "Redact this resource's diff/from/to/output from output and the changelog"}
+            },
+            "resource_types": resource_schemas(),
+        });
+        let obj = schema.as_object().unwrap();
+        let common = obj["common_properties"].as_object().unwrap();
+        assert!(
+            common.contains_key("sensitive"),
+            "common_properties must include 'sensitive'"
+        );
+        assert_eq!(common["sensitive"]["type"], "boolean");
+        assert_eq!(common["sensitive"]["default"], false);
     }
 
     #[test]

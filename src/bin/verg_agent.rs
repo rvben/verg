@@ -254,7 +254,8 @@ fn main() {
 
             let result = resources::execute_resource(&interpolated, dry_run, false);
 
-            // Capture register output
+            // Capture register output before redaction so downstream interpolation
+            // still resolves even when the resource is marked sensitive.
             if let Some(ref reg_name) = resource.register
                 && let Some(ref output) = result.output
             {
@@ -276,6 +277,7 @@ fn main() {
                 failed_fqns.insert(resource.fqn());
             }
 
+            let result = resources::redact_result(result, resource.sensitive);
             results.push(result);
         }
     }
@@ -293,6 +295,7 @@ fn main() {
                     for resource in layer {
                         let interpolated = interpolate_registers(resource, &registers);
                         let result = execute_handler(&interpolated, dry_run);
+                        let result = resources::redact_result(result, resource.sensitive);
                         results.push(result);
                     }
                 }

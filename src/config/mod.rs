@@ -75,6 +75,9 @@ fn check_special_key_type(
                 )?;
             }
         }
+        "sensitive" | "handler" | "template" if !value.is_bool() => {
+            report(policy, format!("{fqn}: '{key}' must be a boolean"))?;
+        }
         _ => {}
     }
     Ok(())
@@ -156,7 +159,14 @@ pub fn known_resource_types() -> &'static [&'static str] {
 /// `pkg` or `env_file` on a `service` is correctly rejected as a wrong-resource
 /// property instead of silently ignored.
 const COMMON_FIELDS: &[&str] = &[
-    "after", "notify", "when", "handler", "template", "register", "vars",
+    "after",
+    "notify",
+    "when",
+    "handler",
+    "template",
+    "register",
+    "vars",
+    "sensitive",
 ];
 
 /// Resource-specific allowed props, mirroring `src/schema.rs`.

@@ -129,6 +129,8 @@ pub struct ResolvedResource {
     pub handler: bool,
     #[serde(default)]
     pub register: Option<String>,
+    #[serde(default)]
+    pub sensitive: bool,
 }
 
 impl ResolvedResource {
@@ -170,6 +172,20 @@ pub fn execute_resource(
             output: None,
         },
     }
+}
+
+/// Blank a result's payload fields when the resource is marked sensitive, so a
+/// secret never reaches stdout/JSON. The status and error are kept.
+pub fn redact_result(mut result: ResourceResult, sensitive: bool) -> ResourceResult {
+    if sensitive {
+        result.from = None;
+        result.to = None;
+        result.output = None;
+        if result.diff.is_some() {
+            result.diff = Some("[redacted]".into());
+        }
+    }
+    result
 }
 
 pub fn run_cmd(cmd: &str, args: &[&str]) -> Result<std::process::Output, Error> {
@@ -233,6 +249,43 @@ pub fn run_cmd_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redact_result_blanks_payloads_when_sensitive() {
+        let r = ResourceResult {
+            resource_type: "cmd".into(),
+            name: "x".into(),
+            status: ResourceStatus::Changed,
+            diff: Some("secret diff".into()),
+            from: Some("old secret".into()),
+            to: Some("new secret".into()),
+            error: None,
+            output: Some("captured secret".into()),
+        };
+        let red = redact_result(r, true);
+        assert_eq!(red.status, ResourceStatus::Changed);
+        assert!(red.from.is_none());
+        assert!(red.to.is_none());
+        assert!(red.output.is_none());
+        assert_eq!(red.diff.as_deref(), Some("[redacted]"));
+    }
+
+    #[test]
+    fn redact_result_noop_when_not_sensitive() {
+        let r = ResourceResult {
+            resource_type: "cmd".into(),
+            name: "x".into(),
+            status: ResourceStatus::Changed,
+            diff: Some("d".into()),
+            from: None,
+            to: None,
+            error: None,
+            output: Some("o".into()),
+        };
+        let red = redact_result(r, false);
+        assert_eq!(red.diff.as_deref(), Some("d"));
+        assert_eq!(red.output.as_deref(), Some("o"));
+    }
 
     #[test]
     fn run_summary_counts() {
@@ -303,6 +356,7 @@ mod tests {
             when: None,
             handler: false,
             register: None,
+            sensitive: false,
         };
         assert_eq!(r.fqn(), "pkg.nginx");
     }
