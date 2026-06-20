@@ -2,6 +2,7 @@ pub mod agent;
 pub mod bundle;
 pub mod changelog;
 pub mod commands;
+pub mod config;
 pub mod engine;
 pub mod error;
 pub mod inventory;
