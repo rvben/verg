@@ -184,29 +184,15 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
         ps_output.status.success() && !String::from_utf8_lossy(&ps_output.stdout).trim().is_empty();
 
     if !is_running {
-        return Ok(ResourceResult {
-            resource_type: "docker_compose".into(),
-            name: name.to_string(),
-            status: ResourceStatus::Ok,
-            diff: None,
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::ok("docker_compose", name.to_string()));
     }
 
     if dry_run {
-        return Ok(ResourceResult {
-            resource_type: "docker_compose".into(),
-            name: name.to_string(),
-            status: ResourceStatus::Changed,
-            diff: Some("would stop".to_string()),
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::changed(
+            "docker_compose",
+            name.to_string(),
+            "would stop",
+        ));
     }
 
     let output = run_cmd("docker", &["compose", "-f", compose_path, "down"])?;
@@ -217,14 +203,9 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
         )));
     }
 
-    Ok(ResourceResult {
-        resource_type: "docker_compose".into(),
-        name: name.to_string(),
-        status: ResourceStatus::Changed,
-        diff: Some("stopped".to_string()),
-        from: None,
-        to: None,
-        error: None,
-        output: None,
-    })
+    Ok(ResourceResult::changed(
+        "docker_compose",
+        name.to_string(),
+        "stopped",
+    ))
 }

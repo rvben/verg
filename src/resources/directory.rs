@@ -31,41 +31,22 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     if state == "absent" {
         if !target.exists() {
-            return Ok(ResourceResult {
-                resource_type: "directory".into(),
-                name: resource.name.clone(),
-                status: ResourceStatus::Ok,
-                diff: None,
-                from: None,
-                to: None,
-                error: None,
-                output: None,
-            });
+            return Ok(ResourceResult::ok("directory", resource.name.clone()));
         }
         if dry_run {
-            return Ok(ResourceResult {
-                resource_type: "directory".into(),
-                name: resource.name.clone(),
-                status: ResourceStatus::Changed,
-                diff: Some(format!("would remove {path}")),
-                from: None,
-                to: None,
-                error: None,
-                output: None,
-            });
+            return Ok(ResourceResult::changed(
+                "directory",
+                resource.name.clone(),
+                format!("would remove {path}"),
+            ));
         }
         std::fs::remove_dir_all(target)
             .map_err(|e| Error::Resource(format!("failed to remove {path}: {e}")))?;
-        return Ok(ResourceResult {
-            resource_type: "directory".into(),
-            name: resource.name.clone(),
-            status: ResourceStatus::Changed,
-            diff: Some(format!("removed {path}")),
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::changed(
+            "directory",
+            resource.name.clone(),
+            format!("removed {path}"),
+        ));
     }
 
     let mut changes = Vec::new();

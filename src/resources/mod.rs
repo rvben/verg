@@ -139,6 +139,58 @@ impl ResolvedResource {
     }
 }
 
+impl ResourceResult {
+    /// A resource already in the desired state (no change).
+    pub fn ok(resource_type: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            resource_type: resource_type.into(),
+            name: name.into(),
+            status: ResourceStatus::Ok,
+            diff: None,
+            from: None,
+            to: None,
+            error: None,
+            output: None,
+        }
+    }
+
+    /// A resource that was changed, with a human-readable diff summary.
+    pub fn changed(
+        resource_type: impl Into<String>,
+        name: impl Into<String>,
+        diff: impl Into<String>,
+    ) -> Self {
+        Self {
+            resource_type: resource_type.into(),
+            name: name.into(),
+            status: ResourceStatus::Changed,
+            diff: Some(diff.into()),
+            from: None,
+            to: None,
+            error: None,
+            output: None,
+        }
+    }
+
+    /// A resource that failed, carrying the error message.
+    pub fn failed(
+        resource_type: impl Into<String>,
+        name: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
+        Self {
+            resource_type: resource_type.into(),
+            name: name.into(),
+            status: ResourceStatus::Failed,
+            diff: None,
+            from: None,
+            to: None,
+            error: Some(error.into()),
+            output: None,
+        }
+    }
+}
+
 pub fn execute_resource(
     resource: &ResolvedResource,
     dry_run: bool,
@@ -161,16 +213,11 @@ pub fn execute_resource(
 
     match result {
         Ok(r) => r,
-        Err(e) => ResourceResult {
-            resource_type: resource.resource_type.clone(),
-            name: resource.name.clone(),
-            status: ResourceStatus::Failed,
-            diff: None,
-            from: None,
-            to: None,
-            error: Some(e.to_string()),
-            output: None,
-        },
+        Err(e) => ResourceResult::failed(
+            resource.resource_type.clone(),
+            resource.name.clone(),
+            e.to_string(),
+        ),
     }
 }
 
@@ -249,6 +296,37 @@ pub fn run_cmd_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_result_ok_constructor() {
+        let r = ResourceResult::ok("pkg", "nginx");
+        assert_eq!(r.resource_type, "pkg");
+        assert_eq!(r.name, "nginx");
+        assert_eq!(r.status, ResourceStatus::Ok);
+        assert!(
+            r.diff.is_none()
+                && r.from.is_none()
+                && r.to.is_none()
+                && r.error.is_none()
+                && r.output.is_none()
+        );
+    }
+
+    #[test]
+    fn resource_result_changed_constructor() {
+        let r = ResourceResult::changed("file", "/etc/hosts", "mode 0644");
+        assert_eq!(r.status, ResourceStatus::Changed);
+        assert_eq!(r.diff.as_deref(), Some("mode 0644"));
+        assert!(r.from.is_none() && r.to.is_none() && r.error.is_none() && r.output.is_none());
+    }
+
+    #[test]
+    fn resource_result_failed_constructor() {
+        let r = ResourceResult::failed("cmd", "deploy", "boom");
+        assert_eq!(r.status, ResourceStatus::Failed);
+        assert_eq!(r.error.as_deref(), Some("boom"));
+        assert!(r.diff.is_none());
+    }
 
     #[test]
     fn redact_result_blanks_payloads_when_sensitive() {

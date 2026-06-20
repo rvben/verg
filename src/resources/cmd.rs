@@ -30,47 +30,20 @@ pub fn execute(
     if let Some(path) = creates
         && Path::new(path).exists()
     {
-        return Ok(ResourceResult {
-            resource_type: "cmd".into(),
-            name: resource.name.clone(),
-            status: ResourceStatus::Ok,
-            diff: None,
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::ok("cmd", resource.name.clone()));
     }
 
     if let Some(cmd) = unless {
         let output = run_cmd("sh", &["-c", cmd])?;
         if output.status.success() {
-            return Ok(ResourceResult {
-                resource_type: "cmd".into(),
-                name: resource.name.clone(),
-                status: ResourceStatus::Ok,
-                diff: None,
-                from: None,
-                to: None,
-                error: None,
-                output: None,
-            });
+            return Ok(ResourceResult::ok("cmd", resource.name.clone()));
         }
     }
 
     if let Some(cmd) = onlyif {
         let output = run_cmd("sh", &["-c", cmd])?;
         if !output.status.success() {
-            return Ok(ResourceResult {
-                resource_type: "cmd".into(),
-                name: resource.name.clone(),
-                status: ResourceStatus::Ok,
-                diff: None,
-                from: None,
-                to: None,
-                error: None,
-                output: None,
-            });
+            return Ok(ResourceResult::ok("cmd", resource.name.clone()));
         }
     }
 
@@ -81,16 +54,7 @@ pub fn execute(
         } else {
             format!("would run: {command}")
         };
-        return Ok(ResourceResult {
-            resource_type: "cmd".into(),
-            name: resource.name.clone(),
-            status: ResourceStatus::Changed,
-            diff: Some(diff),
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::changed("cmd", resource.name.clone(), diff));
     }
 
     let output = if let Some(data) = stdin {

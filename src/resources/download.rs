@@ -143,16 +143,11 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         if changes.is_empty() {
             changes.push(format!("would download {url} -> {dest}"));
         }
-        return Ok(ResourceResult {
-            resource_type: "download".into(),
-            name: resource.name.clone(),
-            status: ResourceStatus::Changed,
-            diff: Some(changes.join(", ")),
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::changed(
+            "download",
+            resource.name.clone(),
+            changes.join(", "),
+        ));
     }
 
     // Create parent directory
@@ -177,16 +172,11 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         run_checked("chown", &[owner, dest], "chown")?;
     }
 
-    Ok(ResourceResult {
-        resource_type: "download".into(),
-        name: resource.name.clone(),
-        status: ResourceStatus::Changed,
-        diff: Some(changes.join(", ")),
-        from: None,
-        to: None,
-        error: None,
-        output: None,
-    })
+    Ok(ResourceResult::changed(
+        "download",
+        resource.name.clone(),
+        changes.join(", "),
+    ))
 }
 
 fn download_and_extract(
@@ -422,42 +412,23 @@ mod tests {
 
 fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error> {
     if !Path::new(dest).exists() {
-        return Ok(ResourceResult {
-            resource_type: "download".into(),
-            name: name.to_string(),
-            status: ResourceStatus::Ok,
-            diff: None,
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::ok("download", name.to_string()));
     }
 
     if dry_run {
-        return Ok(ResourceResult {
-            resource_type: "download".into(),
-            name: name.to_string(),
-            status: ResourceStatus::Changed,
-            diff: Some(format!("would remove {dest}")),
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::changed(
+            "download",
+            name.to_string(),
+            format!("would remove {dest}"),
+        ));
     }
 
     std::fs::remove_file(dest)
         .map_err(|e| Error::Resource(format!("failed to remove {dest}: {e}")))?;
 
-    Ok(ResourceResult {
-        resource_type: "download".into(),
-        name: name.to_string(),
-        status: ResourceStatus::Changed,
-        diff: Some(format!("removed {dest}")),
-        from: None,
-        to: None,
-        error: None,
-        output: None,
-    })
+    Ok(ResourceResult::changed(
+        "download",
+        name.to_string(),
+        format!("removed {dest}"),
+    ))
 }

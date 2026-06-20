@@ -219,16 +219,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     if state == "absent" {
         if !target.exists() {
-            return Ok(ResourceResult {
-                resource_type: "cron".into(),
-                name: resource.name.clone(),
-                status: ResourceStatus::Ok,
-                diff: None,
-                from: None,
-                to: None,
-                error: None,
-                output: None,
-            });
+            return Ok(ResourceResult::ok("cron", resource.name.clone()));
         }
         let current = std::fs::read_to_string(target).ok();
         if dry_run {
@@ -306,16 +297,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     let content_ok = current.as_deref() == Some(desired.as_str());
 
     if content_ok && mode_ok {
-        return Ok(ResourceResult {
-            resource_type: "cron".into(),
-            name: resource.name.clone(),
-            status: ResourceStatus::Ok,
-            diff: None,
-            from: None,
-            to: None,
-            error: None,
-            output: None,
-        });
+        return Ok(ResourceResult::ok("cron", resource.name.clone()));
     }
 
     if dry_run {
