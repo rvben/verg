@@ -9,6 +9,7 @@ pub mod file;
 pub mod pkg;
 pub mod service;
 pub mod sysctl;
+pub mod tempdir;
 pub mod user;
 pub mod when;
 
