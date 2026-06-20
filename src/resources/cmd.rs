@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(result.status, ResourceStatus::Changed);
     }
 
-    // — stdin tests —
+    // stdin tests
 
     #[test]
     fn stdin_is_piped_to_command() {

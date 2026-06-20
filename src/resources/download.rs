@@ -277,6 +277,29 @@ fn find_extracted_file(
     )))
 }
 
+fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error> {
+    if !Path::new(dest).exists() {
+        return Ok(ResourceResult::ok("download", name.to_string()));
+    }
+
+    if dry_run {
+        return Ok(ResourceResult::changed(
+            "download",
+            name.to_string(),
+            format!("would remove {dest}"),
+        ));
+    }
+
+    std::fs::remove_file(dest)
+        .map_err(|e| Error::Resource(format!("failed to remove {dest}: {e}")))?;
+
+    Ok(ResourceResult::changed(
+        "download",
+        name.to_string(),
+        format!("removed {dest}"),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,27 +348,4 @@ mod tests {
         let err = execute(&r, true).unwrap_err();
         assert!(err.to_string().contains("checksum"), "got: {err}");
     }
-}
-
-fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error> {
-    if !Path::new(dest).exists() {
-        return Ok(ResourceResult::ok("download", name.to_string()));
-    }
-
-    if dry_run {
-        return Ok(ResourceResult::changed(
-            "download",
-            name.to_string(),
-            format!("would remove {dest}"),
-        ));
-    }
-
-    std::fs::remove_file(dest)
-        .map_err(|e| Error::Resource(format!("failed to remove {dest}: {e}")))?;
-
-    Ok(ResourceResult::changed(
-        "download",
-        name.to_string(),
-        format!("removed {dest}"),
-    ))
 }

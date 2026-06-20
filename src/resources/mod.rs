@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn read_bounded_rejects_oversized() {
-        let data = vec![b'x'; 100];
+        let data = [b'x'; 100];
         let err = read_bounded(&data[..], 16).unwrap_err();
         assert!(
             err.to_string().contains("too large") || err.to_string().contains("exceeds"),

@@ -100,22 +100,6 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
-        crate::resources::test_resource("apt_repo", "t", props)
-    }
-
-    #[test]
-    fn missing_name_is_an_error() {
-        let err = execute(&resource(HashMap::new()), true).unwrap_err();
-        assert!(err.to_string().contains("requires 'name'"), "got: {err}");
-    }
-}
-
 fn remove(
     name: &str,
     keyring_path: &str,
@@ -145,4 +129,20 @@ fn remove(
         name.to_string(),
         &changes,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
+        crate::resources::test_resource("apt_repo", "t", props)
+    }
+
+    #[test]
+    fn missing_name_is_an_error() {
+        let err = execute(&resource(HashMap::new()), true).unwrap_err();
+        assert!(err.to_string().contains("requires 'name'"), "got: {err}");
+    }
 }

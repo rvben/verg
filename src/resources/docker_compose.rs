@@ -116,25 +116,6 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
-        crate::resources::test_resource("docker_compose", "t", props)
-    }
-
-    #[test]
-    fn missing_project_dir_is_an_error() {
-        let err = execute(&resource(HashMap::new()), true).unwrap_err();
-        assert!(
-            err.to_string().contains("requires 'project_dir'"),
-            "got: {err}"
-        );
-    }
-}
-
 fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error> {
     // Check if anything is running
     let ps_output = run_cmd("docker", &["compose", "-f", compose_path, "ps", "-q"])?;
@@ -164,4 +145,23 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
         name.to_string(),
         "stopped",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
+        crate::resources::test_resource("docker_compose", "t", props)
+    }
+
+    #[test]
+    fn missing_project_dir_is_an_error() {
+        let err = execute(&resource(HashMap::new()), true).unwrap_err();
+        assert!(
+            err.to_string().contains("requires 'project_dir'"),
+            "got: {err}"
+        );
+    }
 }

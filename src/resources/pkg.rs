@@ -93,29 +93,6 @@ fn remove(mgr: &PkgManager, name: &str) -> Result<(), Error> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dpkg_installed_status_is_recognized() {
-        let installed = "Package: nginx\nStatus: install ok installed\nVersion: 1.0\n";
-        assert!(dpkg_reports_installed(installed));
-    }
-
-    #[test]
-    fn dpkg_config_files_status_is_not_installed() {
-        // `apt-get remove` (not purge) leaves this state; binaries are gone.
-        let config_files = "Package: nginx\nStatus: deinstall ok config-files\nVersion: 1.0\n";
-        assert!(!dpkg_reports_installed(config_files));
-    }
-
-    #[test]
-    fn dpkg_empty_output_is_not_installed() {
-        assert!(!dpkg_reports_installed(""));
-    }
-}
-
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let mgr = detect_pkg_manager()?;
     let state = resource.prop_str_or("state", "present");
@@ -181,4 +158,27 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         error: None,
         output: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dpkg_installed_status_is_recognized() {
+        let installed = "Package: nginx\nStatus: install ok installed\nVersion: 1.0\n";
+        assert!(dpkg_reports_installed(installed));
+    }
+
+    #[test]
+    fn dpkg_config_files_status_is_not_installed() {
+        // `apt-get remove` (not purge) leaves this state; binaries are gone.
+        let config_files = "Package: nginx\nStatus: deinstall ok config-files\nVersion: 1.0\n";
+        assert!(!dpkg_reports_installed(config_files));
+    }
+
+    #[test]
+    fn dpkg_empty_output_is_not_installed() {
+        assert!(!dpkg_reports_installed(""));
+    }
 }

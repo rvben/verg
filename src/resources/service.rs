@@ -2,34 +2,6 @@ use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, run_cmd};
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn enabled_states_are_enabled() {
-        assert!(systemctl_reports_enabled("enabled\n"));
-        assert!(systemctl_reports_enabled("enabled-runtime\n"));
-    }
-
-    #[test]
-    fn non_enabled_states_are_not_enabled() {
-        for s in [
-            "disabled\n",
-            "static\n",
-            "masked\n",
-            "indirect\n",
-            "generated\n",
-            "",
-        ] {
-            assert!(
-                !systemctl_reports_enabled(s),
-                "should not be enabled: {s:?}"
-            );
-        }
-    }
-}
-
 fn is_active(name: &str) -> Result<bool, Error> {
     let output = run_cmd("systemctl", &["is-active", name])?;
     Ok(output.status.success())
@@ -107,4 +79,32 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         resource.name.clone(),
         &changes,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enabled_states_are_enabled() {
+        assert!(systemctl_reports_enabled("enabled\n"));
+        assert!(systemctl_reports_enabled("enabled-runtime\n"));
+    }
+
+    #[test]
+    fn non_enabled_states_are_not_enabled() {
+        for s in [
+            "disabled\n",
+            "static\n",
+            "masked\n",
+            "indirect\n",
+            "generated\n",
+            "",
+        ] {
+            assert!(
+                !systemctl_reports_enabled(s),
+                "should not be enabled: {s:?}"
+            );
+        }
+    }
 }
