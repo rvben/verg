@@ -43,9 +43,92 @@ jobs:
       - name: Run tests
         run: make test
 
+  agents:
+    name: Build agent ${{ matrix.target }}
+    # Guard: self-hosted runners only execute on trusted events (tag push,
+    # workflow_dispatch). Fork PRs must never dispatch jobs to self-hosted.
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: [self-hosted, Linux, ARM64]
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare cargo cache dirs (arm64 linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: mkdir -p "${RUNNER_TOOL_CACHE}/cargo-cache/registry" "${RUNNER_TOOL_CACHE}/cargo-cache/git"
+
+      - name: Install cross-compilation tools
+        # Only needed on GitHub-hosted linux where the arm64 toolchain must
+        # be cross-installed. The self-hosted arm64 runner is native.
+        if: matrix.target == 'aarch64-unknown-linux-gnu' && runner.arch != 'ARM64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build static agent binary (musl, arm64 linux via cargo-zigbuild)
+        # Native arm64 has no cross gcc linker; build the musl static agent
+        # with cargo-zigbuild into the host target dir, then copy out.
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        env:
+          CARGO_TARGET_DIR: target-host
+        run: |
+          rustup target add aarch64-unknown-linux-musl
+          cargo zigbuild --release --target aarch64-unknown-linux-musl --bin verg-agent
+          cp "target-host/aarch64-unknown-linux-musl/release/verg-agent" "verg-agent-${{ matrix.target }}"
+
+      - name: Build static agent binary (musl)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          MUSL_TARGET="${{ matrix.target }}"
+          MUSL_TARGET="${MUSL_TARGET/gnu/musl}"
+          rustup target add "$MUSL_TARGET"
+          cargo build --release --target "$MUSL_TARGET" --bin verg-agent
+          cp "target/$MUSL_TARGET/release/verg-agent" "verg-agent-${{ matrix.target }}"
+
+      - name: Compute agent checksum
+        shell: bash
+        run: sha256sum "verg-agent-${{ matrix.target }}" > "verg-agent-${{ matrix.target }}.sha256"
+
+      - name: Upload agent artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.target }}
+          path: |
+            verg-agent-${{ matrix.target }}
+            verg-agent-${{ matrix.target }}.sha256
+
+  manifest:
+    needs: agents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: agents
+      - name: Aggregate agent checksums
+        run: |
+          cat agents/agent-*/verg-agent-*.sha256 > verg-agent-checksums.txt
+          cat verg-agent-checksums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-checksums
+          path: verg-agent-checksums.txt
+
   build:
     name: Build ${{ matrix.target }}
-    needs: test
+    needs: [test, manifest]
     timeout-minutes: 30
     # Guard: self-hosted runners only execute on trusted events (tag push,
     # workflow_dispatch). Fork PRs must never dispatch jobs to self-hosted.
@@ -142,6 +225,24 @@ jobs:
               ;;
           esac
 
+      - name: Download agent checksums manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-checksums
+          path: ${{ runner.temp }}/manifest
+
+      - name: Export agent checksum manifest path
+        shell: bash
+        run: echo "VERG_AGENT_CHECKSUMS_FILE=${RUNNER_TEMP}/manifest/verg-agent-checksums.txt" >> "$GITHUB_ENV"
+
+      - name: Download pre-built agent binary (linux targets)
+        # Reuse the artifact from the agents job so the published agent binary
+        # and the checksum embedded in verg are guaranteed to match.
+        if: contains(matrix.target, 'linux')
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-${{ matrix.target }}
+
       - name: Build binary (arm64 linux via cargo-zigbuild)
         # On the Pi runner build natively with cargo-zigbuild targeting
         # glibc 2.28 for wide distro compatibility. Use a separate target
@@ -157,33 +258,6 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Build static agent binary (musl, arm64 linux via cargo-zigbuild)
-        # Native arm64 has no cross gcc linker; build the musl static agent
-        # with cargo-zigbuild into the host target dir, then copy out.
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        env:
-          CARGO_TARGET_DIR: target-host
-        run: |
-          rustup target add aarch64-unknown-linux-musl
-          cargo zigbuild --release --target aarch64-unknown-linux-musl --bin verg-agent
-          cp "target-host/aarch64-unknown-linux-musl/release/verg-agent" "verg-agent-static-${{ matrix.target }}"
-
-      - name: Build static agent binary (musl)
-        if: contains(matrix.target, 'linux') && matrix.target != 'aarch64-unknown-linux-gnu'
-        shell: bash
-        run: |
-          MUSL_TARGET="${{ matrix.target }}"
-          MUSL_TARGET="${MUSL_TARGET/gnu/musl}"
-          rustup target add "$MUSL_TARGET"
-          if [[ "$MUSL_TARGET" == *"aarch64"* ]]; then
-            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
-              cargo build --release --target "$MUSL_TARGET" --bin verg-agent
-          else
-            cargo build --release --target "$MUSL_TARGET" --bin verg-agent
-          fi
-          # Use the musl binary as the standalone agent
-          cp "target/$MUSL_TARGET/release/verg-agent" "verg-agent-static-${{ matrix.target }}"
 
       - name: Verify binary
         if: ${{ !contains(matrix.target, 'aarch64-unknown-linux') }}
@@ -209,8 +283,9 @@ jobs:
 
           # Standalone agent binary for auto-download (musl for Linux, gnu for macOS)
           AGENT_NAME="verg-agent-${{ matrix.target }}"
-          if [[ -f "verg-agent-static-${{ matrix.target }}" ]]; then
-            cp "verg-agent-static-${{ matrix.target }}" "${AGENT_NAME}"
+          if [[ -f "verg-agent-${{ matrix.target }}" ]]; then
+            # Linux: use the pre-built musl agent downloaded from the agents job
+            : # already named correctly
           else
             cp "${BIN_DIR}/verg-agent" "${AGENT_NAME}"
           fi
