@@ -133,13 +133,14 @@ impl Engine {
         }
 
         let inventory_ctx = Arc::new(inventory.to_template_context());
+        let state_files = Arc::new(state_files);
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.parallel));
         let mut join_set = JoinSet::new();
 
         for host in hosts {
             let host = host.clone();
-            let state_files = state_files.clone();
+            let state_files = Arc::clone(&state_files);
             let inventory_ctx = Arc::clone(&inventory_ctx);
             let mut transport = SshTransport::new(
                 self.transport.agent_dir.clone(),
