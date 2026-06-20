@@ -10,7 +10,7 @@ use crate::bundle::Bundle;
 use crate::error::Error;
 use crate::resources::RunSummary;
 
-use super::ExecResult;
+use super::{ExecResult, Transport};
 
 /// Process-wide per-arch download gate. Only one tokio task per arch runs the
 /// actual download; all other tasks for the same arch await that single result.
@@ -229,7 +229,7 @@ impl SshTransport {
     /// Best-effort teardown of the ControlMaster for a given host target
     /// (`user@address [-p port]`). Called after all work for that host is done.
     /// Errors are silently ignored; this must never affect the host result.
-    pub fn teardown_control_master(&self, conn: &HostConn<'_>) {
+    fn teardown_control_master_inner(&self, conn: &HostConn<'_>) {
         let target = format!("{}@{}", conn.user, conn.address);
         let mut args = self.control_master_args();
         if let Some(p) = conn.port {
@@ -249,7 +249,7 @@ impl SshTransport {
     ///
     /// The fact-producing portion of the remote command is byte-identical to
     /// the former `gather_facts` command so fact values are unchanged.
-    pub async fn preflight(
+    async fn preflight_inner(
         &self,
         conn: &HostConn<'_>,
     ) -> Result<(std::collections::HashMap<String, String>, Option<String>), Error> {
@@ -536,7 +536,7 @@ impl SshTransport {
         Ok(())
     }
 
-    pub async fn execute(
+    async fn execute_inner(
         &self,
         conn: &HostConn<'_>,
         bundle: &Bundle,
@@ -606,6 +606,47 @@ impl SshTransport {
         })?;
 
         Ok(ExecResult { summary })
+    }
+}
+
+impl Transport for SshTransport {
+    /// Creates a fresh per-host instance with the same configuration but a new
+    /// ControlMaster directory, so each host gets its own SSH multiplexing socket.
+    fn for_host(&self) -> Self {
+        let mut t = SshTransport::new(self.agent_dir.clone(), self.version.clone());
+        t.ssh_config = self.ssh_config.clone();
+        t.host_key_checking = self.host_key_checking;
+        t.known_hosts = self.known_hosts.clone();
+        t.skip_agent_checksum = self.skip_agent_checksum;
+        t
+    }
+
+    fn current_version(&self) -> &str {
+        &self.version
+    }
+
+    async fn preflight(
+        &self,
+        conn: &HostConn<'_>,
+    ) -> Result<(std::collections::HashMap<String, String>, Option<String>), crate::error::Error>
+    {
+        self.preflight_inner(conn).await
+    }
+
+    async fn execute(
+        &self,
+        conn: &HostConn<'_>,
+        bundle: &crate::bundle::Bundle,
+        dry_run: bool,
+        arch: &str,
+        has_version: bool,
+    ) -> Result<ExecResult, crate::error::Error> {
+        self.execute_inner(conn, bundle, dry_run, arch, has_version)
+            .await
+    }
+
+    fn teardown_control_master(&self, conn: &HostConn<'_>) {
+        self.teardown_control_master_inner(conn);
     }
 }
 

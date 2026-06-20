@@ -9,10 +9,11 @@ use crate::error::Error;
 use crate::inventory::{Inventory, selector};
 use crate::resources::{ResourceResult, ResourceStatus, RunSummary};
 use crate::state;
+use crate::transport::Transport;
 use crate::transport::ssh::{HostConn, SshTransport};
 
-pub struct Engine {
-    pub transport: SshTransport,
+pub struct Engine<T: Transport = SshTransport> {
+    pub transport: T,
     pub parallel: usize,
     pub policy: crate::config::ConfigPolicy,
     pub timeout_secs: u64,
@@ -69,7 +70,7 @@ impl EngineResult {
     }
 }
 
-impl Engine {
+impl<T: Transport + Send + Sync + 'static> Engine<T> {
     pub async fn run(
         &self,
         base_dir: &Path,
@@ -142,14 +143,7 @@ impl Engine {
             let host = host.clone();
             let state_files = Arc::clone(&state_files);
             let inventory_ctx = Arc::clone(&inventory_ctx);
-            let mut transport = SshTransport::new(
-                self.transport.agent_dir.clone(),
-                self.transport.version.clone(),
-            );
-            transport.ssh_config = self.transport.ssh_config.clone();
-            transport.host_key_checking = self.transport.host_key_checking;
-            transport.known_hosts = self.transport.known_hosts.clone();
-            transport.skip_agent_checksum = self.transport.skip_agent_checksum;
+            let transport = self.transport.for_host();
             let sem = semaphore.clone();
             let cancel = cancel.clone();
 
@@ -196,7 +190,7 @@ impl Engine {
                     // running verg version. Missing or empty means push is needed.
                     let has_version = crate::transport::ssh::version_matches(
                         remote_version.as_deref().unwrap_or(""),
-                        &transport.version,
+                        transport.current_version(),
                     );
 
                     let mut host = host;
@@ -292,6 +286,8 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
     fn failed_summary(host: &str, rtype: &str) -> RunSummary {
         RunSummary::from_results(
@@ -456,6 +452,241 @@ mod tests {
         assert!(
             start.elapsed().as_secs() < 8,
             "timeout should fire well before ssh ConnectTimeout"
+        );
+    }
+
+    // --- MockTransport for engine orchestration tests ---
+
+    /// Outcome injected per host into MockTransport.
+    #[derive(Clone)]
+    enum MockOutcome {
+        /// The execute call returns a summary with the given changed/ok/failed counts.
+        Succeed { changed: u32, ok: u32, failed: u32 },
+        /// The execute call returns an error (maps to a connection failure summary).
+        Fail(String),
+    }
+
+    /// In-test transport that returns canned results without touching SSH.
+    #[derive(Clone)]
+    struct MockTransport {
+        /// Maps host address to the canned outcome for that host.
+        outcomes: Arc<Mutex<HashMap<String, MockOutcome>>>,
+        version: String,
+    }
+
+    impl MockTransport {
+        fn new(version: impl Into<String>) -> Self {
+            Self {
+                outcomes: Arc::new(Mutex::new(HashMap::new())),
+                version: version.into(),
+            }
+        }
+
+        fn set_outcome(&self, address: impl Into<String>, outcome: MockOutcome) {
+            self.outcomes
+                .lock()
+                .unwrap()
+                .insert(address.into(), outcome);
+        }
+    }
+
+    impl Transport for MockTransport {
+        fn for_host(&self) -> Self {
+            self.clone()
+        }
+
+        fn current_version(&self) -> &str {
+            &self.version
+        }
+
+        async fn preflight(
+            &self,
+            conn: &HostConn<'_>,
+        ) -> Result<(HashMap<String, String>, Option<String>), Error> {
+            let mut facts = HashMap::new();
+            facts.insert("fact.arch".into(), "x86_64".into());
+            facts.insert("fact.hostname".into(), conn.address.to_string());
+            Ok((facts, Some(self.version.clone())))
+        }
+
+        async fn execute(
+            &self,
+            conn: &HostConn<'_>,
+            _bundle: &Bundle,
+            _dry_run: bool,
+            _arch: &str,
+            _has_version: bool,
+        ) -> Result<crate::transport::ExecResult, Error> {
+            let outcome = self
+                .outcomes
+                .lock()
+                .unwrap()
+                .get(conn.address)
+                .cloned()
+                .unwrap_or(MockOutcome::Succeed {
+                    changed: 0,
+                    ok: 1,
+                    failed: 0,
+                });
+
+            match outcome {
+                MockOutcome::Succeed {
+                    changed,
+                    ok,
+                    failed,
+                } => {
+                    let mut results = Vec::new();
+                    for i in 0..changed {
+                        results.push(ResourceResult {
+                            resource_type: "pkg".into(),
+                            name: format!("changed-{i}"),
+                            status: ResourceStatus::Changed,
+                            diff: None,
+                            from: None,
+                            to: None,
+                            output: None,
+                            error: None,
+                        });
+                    }
+                    for i in 0..ok {
+                        results.push(ResourceResult {
+                            resource_type: "pkg".into(),
+                            name: format!("ok-{i}"),
+                            status: ResourceStatus::Ok,
+                            diff: None,
+                            from: None,
+                            to: None,
+                            output: None,
+                            error: None,
+                        });
+                    }
+                    for i in 0..failed {
+                        results.push(ResourceResult {
+                            resource_type: "pkg".into(),
+                            name: format!("failed-{i}"),
+                            status: ResourceStatus::Failed,
+                            diff: None,
+                            from: None,
+                            to: None,
+                            output: None,
+                            error: Some("mock failure".into()),
+                        });
+                    }
+                    let summary = RunSummary::from_results(conn.address, results);
+                    Ok(crate::transport::ExecResult { summary })
+                }
+                MockOutcome::Fail(msg) => Err(Error::Connection(msg)),
+            }
+        }
+
+        fn teardown_control_master(&self, _conn: &HostConn<'_>) {
+            // No-op for mock.
+        }
+    }
+
+    /// Builds a minimal verg directory with the given host addresses and a
+    /// trivial state file, then returns an Engine backed by the mock transport.
+    fn mock_engine(
+        dir: &std::path::Path,
+        addresses: &[&str],
+        transport: MockTransport,
+    ) -> Engine<MockTransport> {
+        let mut hosts_toml = String::new();
+        for addr in addresses {
+            let name = addr.replace(['.', ':'], "_");
+            hosts_toml.push_str(&format!("[hosts.{name}]\naddress = \"{addr}\"\n"));
+        }
+        std::fs::write(dir.join("hosts.toml"), &hosts_toml).unwrap();
+        std::fs::create_dir_all(dir.join("state")).unwrap();
+        std::fs::write(
+            dir.join("state").join("base.toml"),
+            "[resource.pkg.curl]\nname = \"curl\"\n",
+        )
+        .unwrap();
+
+        Engine {
+            transport,
+            parallel: 8,
+            policy: crate::config::ConfigPolicy::strict(),
+            timeout_secs: 30,
+        }
+    }
+
+    #[tokio::test]
+    async fn engine_partial_failure_exits_partial_failure() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let transport = MockTransport::new("0.0.0");
+        // host-a succeeds with one ok result; host-b fails.
+        transport.set_outcome(
+            "192.0.2.1",
+            MockOutcome::Succeed {
+                changed: 0,
+                ok: 1,
+                failed: 0,
+            },
+        );
+        transport.set_outcome("192.0.2.2", MockOutcome::Fail("connection refused".into()));
+
+        let engine = mock_engine(dir.path(), &["192.0.2.1", "192.0.2.2"], transport);
+        let result = engine.run(dir.path(), "all", true).await.unwrap();
+
+        assert_eq!(result.summaries.len(), 2);
+        assert!(result.has_failures(), "one host should have failed");
+        assert_eq!(
+            result.exit_code(),
+            crate::error::exit_codes::PARTIAL_FAILURE,
+            "one ok host + one failing host must yield PARTIAL_FAILURE(2)"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_all_hosts_succeed_with_changes_exits_success() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let transport = MockTransport::new("0.0.0");
+        transport.set_outcome(
+            "192.0.2.1",
+            MockOutcome::Succeed {
+                changed: 1,
+                ok: 0,
+                failed: 0,
+            },
+        );
+        transport.set_outcome(
+            "192.0.2.2",
+            MockOutcome::Succeed {
+                changed: 2,
+                ok: 0,
+                failed: 0,
+            },
+        );
+
+        let engine = mock_engine(dir.path(), &["192.0.2.1", "192.0.2.2"], transport);
+        let result = engine.run(dir.path(), "all", true).await.unwrap();
+
+        assert!(!result.has_failures());
+        assert!(result.has_changes());
+        assert_eq!(
+            result.exit_code(),
+            crate::error::exit_codes::SUCCESS,
+            "all changed -> SUCCESS(0)"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_all_hosts_nothing_changed_exits_nothing_changed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let transport = MockTransport::new("0.0.0");
+        // Default outcome (no set_outcome) returns ok=1, changed=0, failed=0.
+
+        let engine = mock_engine(dir.path(), &["192.0.2.1", "192.0.2.2"], transport);
+        let result = engine.run(dir.path(), "all", true).await.unwrap();
+
+        assert!(!result.has_failures());
+        assert!(!result.has_changes());
+        assert_eq!(
+            result.exit_code(),
+            crate::error::exit_codes::NOTHING_CHANGED,
+            "all ok, no changes -> NOTHING_CHANGED(1)"
         );
     }
 }
