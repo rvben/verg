@@ -20,7 +20,7 @@ impl OutputConfig {
             (OutputFormat::Auto, false) => !std::io::stdout().is_terminal(),
             (OutputFormat::Text, false) => false,
         };
-        let color = std::io::stderr().is_terminal() && !json;
+        let color = std::io::stdout().is_terminal() && !json;
         Self {
             json,
             color,
