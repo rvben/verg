@@ -106,6 +106,8 @@ impl Engine {
                 self.transport.version.clone(),
             );
             transport.ssh_config = self.transport.ssh_config.clone();
+            transport.host_key_checking = self.transport.host_key_checking;
+            transport.known_hosts = self.transport.known_hosts.clone();
             let sem = semaphore.clone();
 
             let base_dir = base_dir.to_path_buf();

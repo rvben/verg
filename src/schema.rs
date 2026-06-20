@@ -13,7 +13,9 @@ pub fn run() {
             {"name": "--parallel", "type": "integer", "default": 10, "description": "Maximum parallel connections"},
             {"name": "--ssh-config", "type": "path", "description": "Path to SSH config file"},
             {"name": "--yes", "type": "boolean", "description": "Skip confirmation prompts for destructive operations"},
-            {"name": "--lax-config", "type": "boolean", "description": "Downgrade config validation errors (unknown keys/types) to warnings"}
+            {"name": "--lax-config", "type": "boolean", "description": "Downgrade config validation errors (unknown keys/types) to warnings"},
+            {"name": "--host-key-checking", "type": "string", "enum": ["yes", "accept-new", "no"], "default": "yes", "description": "SSH host key checking policy"},
+            {"name": "--ssh-known-hosts", "type": "path", "description": "Path to a known_hosts file"}
         ],
         "commands": [
             {

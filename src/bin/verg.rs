@@ -7,6 +7,7 @@ use verg::commands;
 use verg::engine::Engine;
 use verg::error::Error;
 use verg::output::{OutputConfig, OutputFormat};
+use verg::transport::HostKeyChecking;
 use verg::transport::ssh::SshTransport;
 
 #[derive(Parser)]
@@ -46,6 +47,14 @@ struct Cli {
     /// Downgrade unknown-key, unknown-type, and wrong-type config errors to warnings
     #[arg(long, global = true)]
     lax_config: bool,
+
+    /// SSH host key checking policy
+    #[arg(long, global = true, default_value = "yes", value_enum)]
+    host_key_checking: HostKeyChecking,
+
+    /// Path to a known_hosts file for host key verification
+    #[arg(long, global = true)]
+    ssh_known_hosts: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -149,6 +158,8 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
                 policy,
+                cli.host_key_checking,
+                cli.ssh_known_hosts.clone(),
             )?;
             commands::apply::run(&engine, &base_dir, &targets, cli.yes, output).await
         }
@@ -163,6 +174,8 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
                 policy,
+                cli.host_key_checking,
+                cli.ssh_known_hosts.clone(),
             )?;
             commands::diff::run(&engine, &base_dir, &targets, limit, offset, fields, output).await
         }
@@ -172,6 +185,8 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
                 policy,
+                cli.host_key_checking,
+                cli.ssh_known_hosts.clone(),
             )?;
             commands::check::run(&engine, &base_dir, &targets, output).await
         }
@@ -197,6 +212,8 @@ fn build_engine(
     ssh_config: Option<PathBuf>,
     agent_dir: Option<PathBuf>,
     policy: verg::config::ConfigPolicy,
+    host_key_checking: HostKeyChecking,
+    known_hosts: Option<PathBuf>,
 ) -> Result<Engine, Error> {
     let agent_dir = match agent_dir {
         Some(dir) => dir,
@@ -220,6 +237,8 @@ fn build_engine(
 
     let mut transport = SshTransport::new(agent_dir, version);
     transport.ssh_config = ssh_config;
+    transport.host_key_checking = host_key_checking;
+    transport.known_hosts = known_hosts;
 
     Ok(Engine {
         transport,

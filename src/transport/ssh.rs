@@ -12,10 +12,33 @@ use super::ExecResult;
 const AGENT_PATH: &str = "/usr/local/bin/verg-agent";
 const VERSION_PATH: &str = "/usr/local/share/verg/version";
 
+/// SSH host key checking policy passed to StrictHostKeyChecking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum HostKeyChecking {
+    /// Host must already be in known_hosts; a changed key is rejected.
+    Yes,
+    /// Trust on first use: accept an unknown host, reject a changed key.
+    AcceptNew,
+    /// Disable host key checking (unsafe).
+    No,
+}
+
+impl HostKeyChecking {
+    fn as_ssh_value(self) -> &'static str {
+        match self {
+            HostKeyChecking::Yes => "yes",
+            HostKeyChecking::AcceptNew => "accept-new",
+            HostKeyChecking::No => "no",
+        }
+    }
+}
+
 pub struct SshTransport {
     pub agent_dir: PathBuf,
     pub version: String,
     pub ssh_config: Option<PathBuf>,
+    pub host_key_checking: HostKeyChecking,
+    pub known_hosts: Option<PathBuf>,
 }
 
 impl SshTransport {
@@ -24,11 +47,25 @@ impl SshTransport {
             agent_dir,
             version,
             ssh_config: None,
+            host_key_checking: HostKeyChecking::Yes,
+            known_hosts: None,
         }
     }
 
     fn ssh_base_args(&self) -> Vec<String> {
-        let mut args = vec!["-o".into(), "BatchMode=yes".into()];
+        let mut args = vec![
+            "-o".into(),
+            "BatchMode=yes".into(),
+            "-o".into(),
+            format!(
+                "StrictHostKeyChecking={}",
+                self.host_key_checking.as_ssh_value()
+            ),
+        ];
+        if let Some(file) = &self.known_hosts {
+            args.push("-o".into());
+            args.push(format!("UserKnownHostsFile={}", file.to_string_lossy()));
+        }
         if let Some(config) = &self.ssh_config {
             args.push("-F".into());
             args.push(config.to_string_lossy().into_owned());
@@ -323,5 +360,38 @@ impl SshTransport {
         })?;
 
         Ok(ExecResult { summary })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_args_default_is_strict_yes() {
+        let t = SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into());
+        let args = t.ssh_base_args();
+        let joined = args.join(" ");
+        assert!(
+            joined.contains("StrictHostKeyChecking=yes"),
+            "got: {joined}"
+        );
+        assert!(joined.contains("BatchMode=yes"), "got: {joined}");
+    }
+
+    #[test]
+    fn base_args_accept_new_and_known_hosts() {
+        let mut t = SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into());
+        t.host_key_checking = HostKeyChecking::AcceptNew;
+        t.known_hosts = Some(std::path::PathBuf::from("/etc/verg/known_hosts"));
+        let joined = t.ssh_base_args().join(" ");
+        assert!(
+            joined.contains("StrictHostKeyChecking=accept-new"),
+            "got: {joined}"
+        );
+        assert!(
+            joined.contains("UserKnownHostsFile=/etc/verg/known_hosts"),
+            "got: {joined}"
+        );
     }
 }
