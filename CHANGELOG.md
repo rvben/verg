@@ -12,6 +12,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.6.5](https://github.com/rvben/verg/compare/v0.6.4...v0.6.5) - 2026-06-20
+
+### Added
+
+- **engine**: graceful Ctrl-C - finish in-flight hosts, skip the rest ([4b7c15a](https://github.com/rvben/verg/commit/4b7c15a9d8f21a72594715377ba42aaa3fde02f9))
+- **resources**: add sensitive attribute and redact changelog payloads ([b133812](https://github.com/rvben/verg/commit/b133812ac63bd6b8934da743f3f911ad49d79aec))
+- **engine**: per-host timeout so a hung host fails instead of blocking ([4936134](https://github.com/rvben/verg/commit/4936134c0404c0ab97b5926eb2b61456b537c2c3))
+- **resources**: add write_atomic helper for managed config files ([eb6bc26](https://github.com/rvben/verg/commit/eb6bc266e0fc48b5fb02ca2fa1a9bc9a9d1a885c))
+- **agent**: verify agent integrity locally and on the remote; atomic install ([3bcea2a](https://github.com/rvben/verg/commit/3bcea2a1a66965002152c9c20a435be246e1471b))
+- **agent**: embed agent-binary checksum manifest at build time ([58acce5](https://github.com/rvben/verg/commit/58acce5eafdaae4e98bf6929d7b6d6c96308103a))
+- **ssh**: enforce a uniform host-key policy (default StrictHostKeyChecking=yes) ([8f002c0](https://github.com/rvben/verg/commit/8f002c0958cece8a2d34636039e674d028c55b8a))
+- **config**: reject unknown top-level state keys; add --lax-config ([5e76e6f](https://github.com/rvben/verg/commit/5e76e6f35994c99a1557b0080448c832a28e8384))
+- **config**: validate resource types, props, and special-key types ([0c7da0f](https://github.com/rvben/verg/commit/0c7da0f01c9a1c4accc6d934e182bb6773ffa122))
+- **config**: add ConfigPolicy and resource field registry ([9fae2e2](https://github.com/rvben/verg/commit/9fae2e2577555bf8818fd5821dfa4e6a0dcd503b))
+- **resources**: add ScopedTempDir helper (unique 0700 temp dir) ([df04f63](https://github.com/rvben/verg/commit/df04f6399fb6da63e0ae910b1f8ad640cf343694))
+
+### Fixed
+
+- **config**: accept IPv6 host addresses; clarify changelog redaction policy ([a666c6d](https://github.com/rvben/verg/commit/a666c6db6feb96681f4037a4a2b7d1eb51ec5920))
+- **config**: validate host fields; propagate state read errors; coerce vars scalars ([15145eb](https://github.com/rvben/verg/commit/15145eb856ba5d4ae8d1e6500fcb579656e3fbae))
+- **cli**: structured errors on hot paths; confirmation maps to invalid_config ([dc1a9e2](https://github.com/rvben/verg/commit/dc1a9e21ec413639b7d74558c68e31d737384caf))
+- **agent**: bound stdin read and pin a minimal PATH for commands ([e16a2b1](https://github.com/rvben/verg/commit/e16a2b1d5edd990d57345173c939cce3477bf731))
+- **ssh**: apply connect + keepalive timeouts to all ssh/scp calls ([96ad97e](https://github.com/rvben/verg/commit/96ad97e2322f297946588fa5e0576ccce2288e76))
+- **resources**: write managed config files atomically ([9cd0804](https://github.com/rvben/verg/commit/9cd0804c04128d849cd2a18eb7787053b8836612))
+- **directory**: check owner and group drift independently ([c1693b0](https://github.com/rvben/verg/commit/c1693b045cd4b34a1221fe68dc185737aba5f797))
+- **download**: error when chmod/chown fail instead of swallowing it ([c3737b7](https://github.com/rvben/verg/commit/c3737b79c7ab144d037c5b89653f34dacfea38e7))
+- **sysctl**: error on failed read; persist by exact key match ([d8b6418](https://github.com/rvben/verg/commit/d8b641888d13f5fa29d9f9a98336c45b01b3dcb5))
+- **service**: parse systemctl is-enabled output instead of exit code ([87a2021](https://github.com/rvben/verg/commit/87a202131e7c08550d0d0b726aec1a0f9d01fe8e))
+- **pkg**: treat dpkg config-files state as not installed ([b1a0f23](https://github.com/rvben/verg/commit/b1a0f23da5100aa0e3c48e6197be645a37e2ed7d))
+- **agent**: validate embedded checksum format before install; expose --skip-agent-checksum in schema ([c527d4b](https://github.com/rvben/verg/commit/c527d4b81a939b1cabb38b5997c5d7a67d0c77a1))
+- **download**: use private per-run temp dirs and harden extraction ([2111c87](https://github.com/rvben/verg/commit/2111c8755f5f8587b1f8b64a57bc5b372c041556))
+- **cron**: reject control characters in user, mailto, and env fields ([0cb6eda](https://github.com/rvben/verg/commit/0cb6edab29705cce5af33db3785993076178e4c9))
+- **when**: treat missing fact in != comparison as skip ([114c16a](https://github.com/rvben/verg/commit/114c16a0fcfdc7ad33370d5419cbb4f171da0487))
+
+### Performance
+
+- **ssh**: gather facts once per host; bound agent output in errors ([9288156](https://github.com/rvben/verg/commit/92881565f4ae16722e1468afef11e048ff532395))
+
 ## [0.6.4](https://github.com/rvben/verg/compare/v0.6.3...v0.6.4) - 2026-06-11
 
 ### Added
