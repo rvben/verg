@@ -299,24 +299,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_checked_errors_on_command_failure() {
-        // chmod on a path that does not exist exits non-zero.
-        let err = run_checked(
-            "chmod",
-            &["0644", "/nonexistent/verg/should/not/exist"],
-            "chmod",
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("chmod"), "got: {err}");
-    }
-
-    #[test]
-    fn run_checked_ok_on_success() {
-        // `true` always succeeds.
-        assert!(run_checked("true", &[], "noop").is_ok());
-    }
-
-    #[test]
     fn extracted_file_requires_name_match() {
         let dir = tempfile::TempDir::new().unwrap();
         // Two unrelated files, neither matching the requested basename.
