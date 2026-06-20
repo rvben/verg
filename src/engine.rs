@@ -172,6 +172,9 @@ impl Engine {
                     );
                 }
                 let host_name = host.name.clone();
+                let host_user = host.user.clone();
+                let host_address = host.address.clone();
+                let host_port = host.port;
                 let work = async {
                     // Gather facts from target and inject into host vars
                     let facts = transport
@@ -219,6 +222,12 @@ impl Engine {
                             "host timed out after {timeout_secs}s"
                         ))),
                     };
+
+                // Best-effort teardown: close the ControlMaster socket so the
+                // background master exits immediately (rather than lingering
+                // for the ControlPersist duration). Done after all work for
+                // this host is complete, so no in-flight session uses the socket.
+                transport.teardown_control_master(&host_user, &host_address, host_port);
 
                 match result {
                     Ok(summary) => summary,

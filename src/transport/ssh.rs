@@ -87,10 +87,22 @@ pub struct SshTransport {
     pub host_key_checking: HostKeyChecking,
     pub known_hosts: Option<PathBuf>,
     pub skip_agent_checksum: bool,
+    /// Per-transport directory holding the ControlMaster socket (`%C` hash).
+    /// Scoped to this process and host; used by both ssh and scp invocations.
+    control_dir: PathBuf,
 }
 
 impl SshTransport {
     pub fn new(agent_dir: PathBuf, version: String) -> Self {
+        let control_dir = std::env::temp_dir().join(format!("verg-cm-{}", std::process::id()));
+        // Best-effort: if the dir cannot be created, ControlMaster=auto will
+        // warn and fall back to a direct connection, so no error is fatal here.
+        let _ = std::fs::create_dir_all(&control_dir);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&control_dir, std::fs::Permissions::from_mode(0o700));
+        }
         Self {
             agent_dir,
             version,
@@ -98,6 +110,7 @@ impl SshTransport {
             host_key_checking: HostKeyChecking::Yes,
             known_hosts: None,
             skip_agent_checksum: false,
+            control_dir,
         }
     }
 
@@ -119,6 +132,19 @@ impl SshTransport {
             "-o".into(),
             "ServerAliveCountMax=3".into(),
         ]);
+        // Connection multiplexing: reuse one TCP+auth session per host across
+        // all ssh/scp invocations. ControlMaster=auto is fail-safe: if the
+        // socket cannot be created, ssh warns and connects normally.
+        // %C is OpenSSH's short connection hash (avoids long path collisions on
+        // macOS where unix socket paths are capped near 104 bytes).
+        args.extend([
+            "-o".into(),
+            "ControlMaster=auto".into(),
+            "-o".into(),
+            format!("ControlPath={}/{}", self.control_dir.display(), "%C"),
+            "-o".into(),
+            "ControlPersist=60s".into(),
+        ]);
         if let Some(file) = &self.known_hosts {
             args.push("-o".into());
             args.push(format!("UserKnownHostsFile={}", file.to_string_lossy()));
@@ -128,6 +154,34 @@ impl SshTransport {
             args.push(config.to_string_lossy().into_owned());
         }
         args
+    }
+
+    /// Returns the control-master args needed to send a control command
+    /// (e.g. `-O exit`) to an existing master socket for this transport.
+    pub fn control_master_args(&self) -> Vec<String> {
+        vec![
+            "-o".into(),
+            "ControlMaster=auto".into(),
+            "-o".into(),
+            format!("ControlPath={}/{}", self.control_dir.display(), "%C"),
+        ]
+    }
+
+    /// Best-effort teardown of the ControlMaster for a given host target
+    /// (`user@address [-p port]`). Called after all work for that host is done.
+    /// Errors are silently ignored; this must never affect the host result.
+    pub fn teardown_control_master(&self, user: &str, address: &str, port: Option<u16>) {
+        let target = format!("{user}@{address}");
+        let mut args = self.control_master_args();
+        if let Some(p) = port {
+            args.extend(["-p".into(), p.to_string()]);
+        }
+        // -O exit signals the master to shut down cleanly. Runs synchronously
+        // (no network involved - it writes to the local unix socket) so there
+        // is no meaningful latency cost.
+        args.extend(["-O".into(), "exit".into(), target]);
+        let _ = std::process::Command::new("ssh").args(&args).output();
+        let _ = std::fs::remove_dir_all(&self.control_dir);
     }
 
     /// Gather basic system facts from the target in a single SSH command.
@@ -551,6 +605,15 @@ mod tests {
         assert!(joined.contains("ConnectTimeout=10"), "got: {joined}");
         assert!(joined.contains("ServerAliveInterval=15"), "got: {joined}");
         assert!(joined.contains("ServerAliveCountMax=3"), "got: {joined}");
+    }
+
+    #[test]
+    fn base_args_enable_connection_multiplexing() {
+        let t = SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into());
+        let joined = t.ssh_base_args().join(" ");
+        assert!(joined.contains("ControlMaster=auto"), "got: {joined}");
+        assert!(joined.contains("ControlPath="), "got: {joined}");
+        assert!(joined.contains("ControlPersist="), "got: {joined}");
     }
 
     #[test]
