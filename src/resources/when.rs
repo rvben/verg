@@ -8,17 +8,19 @@ use std::collections::HashMap;
 ///   "group.caddy"
 ///   "!group.caddy"
 ///   "fact.os == 'Ubuntu' && group.docker"
+///   "fact.os == 'Ubuntu' || group.docker"
+///
+/// Operator precedence (lowest to highest): `||` < `&&`. No parentheses support.
 pub fn evaluate(expr: &str, facts: &HashMap<String, String>) -> bool {
     let expr = expr.trim();
 
-    // Handle && (AND)
-    if expr.contains("&&") {
-        return expr.split("&&").all(|part| evaluate(part, facts));
-    }
-
-    // Handle || (OR)
+    // Handle || (OR) first - it binds looser than &&.
     if expr.contains("||") {
         return expr.split("||").any(|part| evaluate(part, facts));
+    }
+    // Then && (AND).
+    if expr.contains("&&") {
+        return expr.split("&&").all(|part| evaluate(part, facts));
     }
 
     let expr = expr.trim();
@@ -114,5 +116,20 @@ mod tests {
         assert!(!evaluate("fact.nonexistent != 'val'", &facts()));
         // Symmetric with a misspelled key.
         assert!(!evaluate("fact.osss != 'Ubuntu'", &facts()));
+    }
+
+    #[test]
+    fn or_binds_looser_than_and() {
+        // fact.os == 'Ubuntu' is true; group.monitoring is false.
+        // "true || false && false" must be true (|| has lower precedence).
+        assert!(evaluate(
+            "fact.os == 'Ubuntu' || group.monitoring && group.nonexistent",
+            &facts()
+        ));
+        // "false && false || true" must be true.
+        assert!(evaluate(
+            "group.monitoring && group.nonexistent || fact.os == 'Ubuntu'",
+            &facts()
+        ));
     }
 }
