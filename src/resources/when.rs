@@ -32,7 +32,7 @@ pub fn evaluate(expr: &str, facts: &HashMap<String, String>) -> bool {
     if let Some((lhs, rhs)) = expr.split_once("!=") {
         let key = lhs.trim();
         let val = rhs.trim().trim_matches('\'').trim_matches('"');
-        return facts.get(key).map(|v| v.as_str() != val).unwrap_or(true);
+        return facts.get(key).map(|v| v.as_str() != val).unwrap_or(false);
     }
     if let Some((lhs, rhs)) = expr.split_once("==") {
         let key = lhs.trim();
@@ -105,5 +105,14 @@ mod tests {
     fn missing_fact_is_false() {
         assert!(!evaluate("fact.nonexistent == 'val'", &facts()));
         assert!(!evaluate("group.nonexistent", &facts()));
+    }
+
+    #[test]
+    fn missing_fact_inequality_is_false() {
+        // A `!=` against an absent fact must NOT run the resource. An
+        // indeterminate condition is treated as "skip", matching `==`.
+        assert!(!evaluate("fact.nonexistent != 'val'", &facts()));
+        // Symmetric with a misspelled key.
+        assert!(!evaluate("fact.osss != 'Ubuntu'", &facts()));
     }
 }
