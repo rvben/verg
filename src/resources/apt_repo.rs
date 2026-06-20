@@ -141,6 +141,31 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
+        ResolvedResource {
+            resource_type: "apt_repo".into(),
+            name: "t".into(),
+            props,
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+        }
+    }
+
+    #[test]
+    fn missing_name_is_an_error() {
+        let err = execute(&resource(HashMap::new()), true).unwrap_err();
+        assert!(err.to_string().contains("requires 'name'"), "got: {err}");
+    }
+}
+
 fn remove(
     name: &str,
     keyring_path: &str,

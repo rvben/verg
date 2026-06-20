@@ -103,3 +103,57 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         output: None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn resource(name: &str, props: HashMap<String, toml::Value>) -> ResolvedResource {
+        ResolvedResource {
+            resource_type: "file".into(),
+            name: name.into(),
+            props,
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+        }
+    }
+
+    #[test]
+    fn missing_path_is_an_error() {
+        let err = execute(&resource("f", HashMap::new()), true).unwrap_err();
+        assert!(err.to_string().contains("requires 'path'"), "got: {err}");
+    }
+
+    #[test]
+    fn writes_content_and_is_idempotent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("conf");
+        let mut props = HashMap::new();
+        props.insert(
+            "path".into(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        );
+        props.insert("content".into(), toml::Value::String("hello\n".into()));
+        let r = resource("conf", props);
+
+        // First apply writes the content (via write_atomic) and reports Changed.
+        let first = execute(&r, false).unwrap();
+        assert_eq!(first.status, ResourceStatus::Changed);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello\n");
+        // No temp file is left behind in the directory.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("verg-tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp file left behind");
+
+        // Second apply is a no-op (Ok), proving idempotency.
+        let second = execute(&r, false).unwrap();
+        assert_eq!(second.status, ResourceStatus::Ok);
+    }
+}
