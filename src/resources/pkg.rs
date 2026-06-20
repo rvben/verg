@@ -35,6 +35,7 @@ fn dpkg_reports_installed(status_output: &str) -> bool {
 fn is_installed(mgr: &PkgManager, name: &str) -> Result<bool, Error> {
     match mgr {
         PkgManager::Apt => {
+            // Two-level: dpkg -s must exit 0 AND report "install ok installed" (it exits 0 for config-files state too).
             let output = run_cmd("dpkg", &["-s", name])?;
             Ok(output.status.success()
                 && dpkg_reports_installed(&String::from_utf8_lossy(&output.stdout)))

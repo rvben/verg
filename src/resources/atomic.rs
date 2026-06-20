@@ -32,6 +32,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<(), 
     let existing = std::fs::metadata(path).ok();
 
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("verg");
+    // PID-suffixed temp name: safe because the agent applies resources sequentially per host (no concurrent write_atomic on the same path).
     let tmp_path = parent.join(format!(".{file_name}.verg-tmp.{}", std::process::id()));
 
     // O_EXCL create: we own the temp file.

@@ -68,7 +68,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         let conf_path = "/etc/sysctl.d/99-verg.conf";
         let current_conf = std::fs::read_to_string(conf_path).unwrap_or_default();
 
-        // Check if the entry already exists with correct value
+        // Space-tolerant: normalizes "key = val" and "key=val" to the same form for comparison.
         let has_correct_entry = current_conf.lines().any(|line| {
             let trimmed = line.trim();
             !trimmed.starts_with('#') && trimmed.replace(' ', "") == format!("{key}={desired}")
