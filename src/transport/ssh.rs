@@ -94,7 +94,22 @@ pub struct SshTransport {
 
 impl SshTransport {
     pub fn new(agent_dir: PathBuf, version: String) -> Self {
-        let control_dir = std::env::temp_dir().join(format!("verg-cm-{}", std::process::id()));
+        // Unique per transport instance (one per host) so each host's teardown
+        // removes only its own socket directory and concurrent hosts never race
+        // on the same path. Rooted at a SHORT base (/tmp on unix) because the
+        // fully expanded ControlPath (`<dir>/%C`, where %C is a 40-char hash)
+        // must stay under the unix-domain socket path limit (~104 bytes on
+        // macOS); the default temp dir on macOS (/var/folders/...) is already
+        // long enough to overflow that with a per-host suffix.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base = if cfg!(unix) {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let control_dir = base.join(format!("vcm-{}-{}", std::process::id(), seq));
         // Best-effort: if the dir cannot be created, ControlMaster=auto will
         // warn and fall back to a direct connection, so no error is fatal here.
         let _ = std::fs::create_dir_all(&control_dir);
@@ -158,7 +173,7 @@ impl SshTransport {
 
     /// Returns the control-master args needed to send a control command
     /// (e.g. `-O exit`) to an existing master socket for this transport.
-    pub fn control_master_args(&self) -> Vec<String> {
+    fn control_master_args(&self) -> Vec<String> {
         vec![
             "-o".into(),
             "ControlMaster=auto".into(),
@@ -613,6 +628,9 @@ mod tests {
         let joined = t.ssh_base_args().join(" ");
         assert!(joined.contains("ControlMaster=auto"), "got: {joined}");
         assert!(joined.contains("ControlPath="), "got: {joined}");
+        // %C is the short connection hash; a literal hostname token (%h) could
+        // blow the macOS unix-socket path limit, so pin the token.
+        assert!(joined.contains("/%C"), "got: {joined}");
         assert!(joined.contains("ControlPersist="), "got: {joined}");
     }
 
