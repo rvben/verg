@@ -2,6 +2,94 @@
 //! so `diff`/`check`/`apply` reject typos locally rather than failing on the
 //! remote agent (or silently doing the wrong thing).
 
+use crate::error::Error;
+use crate::state::StateFile;
+
+/// Validate resource types, prop names, and special-key types across all state
+/// files. Strict mode errors on the first violation; lax mode warns and continues.
+pub fn validate_state_files(files: &[StateFile], policy: ConfigPolicy) -> Result<(), Error> {
+    for sf in files {
+        for decl in sf.resources()? {
+            let fqn = format!("{}.{}", decl.resource_type, decl.name);
+
+            if !known_resource_types().contains(&decl.resource_type.as_str()) {
+                report(
+                    policy,
+                    format!(
+                        "{fqn}: unknown resource type '{}'. Known types: {}",
+                        decl.resource_type,
+                        known_resource_types().join(", ")
+                    ),
+                )?;
+                // Unknown type has no field list; skip per-field checks.
+                continue;
+            }
+
+            let allowed = allowed_fields(&decl.resource_type)
+                .expect("known type must have an allowed-field list");
+
+            for (key, value) in &decl.props {
+                if !allowed.contains(&key.as_str()) {
+                    report(
+                        policy,
+                        format!(
+                            "{fqn}: unknown property '{key}'. Allowed: {}",
+                            allowed.join(", ")
+                        ),
+                    )?;
+                }
+                check_special_key_type(policy, &fqn, key, value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_special_key_type(
+    policy: ConfigPolicy,
+    fqn: &str,
+    key: &str,
+    value: &toml::Value,
+) -> Result<(), Error> {
+    match key {
+        "when" | "register" if !value.is_str() => {
+            report(policy, format!("{fqn}: '{key}' must be a string"))?;
+        }
+        "when" | "register" => {}
+        "after" => match value.as_array() {
+            Some(arr) if arr.iter().all(|v| v.is_str()) => {}
+            _ => report(
+                policy,
+                format!("{fqn}: 'after' must be an array of strings"),
+            )?,
+        },
+        "notify" => {
+            let ok = value.is_str()
+                || value
+                    .as_array()
+                    .is_some_and(|arr| arr.iter().all(|v| v.is_str()));
+            if !ok {
+                report(
+                    policy,
+                    format!("{fqn}: 'notify' must be a string or an array of strings"),
+                )?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// In strict mode, return a Config error. In lax mode, warn to stderr and continue.
+fn report(policy: ConfigPolicy, message: String) -> Result<(), Error> {
+    if policy.strict {
+        Err(Error::Config(message))
+    } else {
+        eprintln!("warning: {message}");
+        Ok(())
+    }
+}
+
 /// How strictly to treat unknown keys, unknown resource types, and wrong-typed
 /// special keys. `strict` errors; `lax` downgrades to warnings on stderr.
 #[derive(Debug, Clone, Copy)]
@@ -93,6 +181,63 @@ pub fn allowed_fields(resource_type: &str) -> Option<Vec<&'static str>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::StateFile;
+
+    fn parse(s: &str) -> StateFile {
+        toml::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn unknown_resource_type_is_rejected() {
+        let f = parse("[resource.serrvice.nginx]\nname = \"nginx\"\n");
+        let err = validate_state_files(&[f], ConfigPolicy::strict()).unwrap_err();
+        assert!(err.to_string().contains("serrvice"), "got: {err}");
+    }
+
+    #[test]
+    fn misspelled_prop_is_rejected() {
+        let f = parse("[resource.file.conf]\npath = \"/etc/x\"\nmod = \"0644\"\n");
+        let err = validate_state_files(&[f], ConfigPolicy::strict()).unwrap_err();
+        assert!(err.to_string().contains("mod"), "got: {err}");
+        assert!(err.to_string().contains("file.conf"), "got: {err}");
+    }
+
+    #[test]
+    fn wrong_resource_property_is_rejected() {
+        // `source` is a file-only build input; on pkg it would be silently
+        // ignored, so it must be rejected.
+        let f = parse("[resource.pkg.nginx]\nname = \"nginx\"\nsource = \"files/x\"\n");
+        let err = validate_state_files(&[f], ConfigPolicy::strict()).unwrap_err();
+        assert!(err.to_string().contains("source"), "got: {err}");
+    }
+
+    #[test]
+    fn wrong_typed_when_is_rejected() {
+        let f = parse("[resource.service.nginx]\nname = \"nginx\"\nwhen = 1\n");
+        let err = validate_state_files(&[f], ConfigPolicy::strict()).unwrap_err();
+        assert!(err.to_string().contains("when"), "got: {err}");
+    }
+
+    #[test]
+    fn wrong_typed_after_item_is_rejected() {
+        let f = parse("[resource.service.nginx]\nname = \"nginx\"\nafter = [42]\n");
+        let err = validate_state_files(&[f], ConfigPolicy::strict()).unwrap_err();
+        assert!(err.to_string().contains("after"), "got: {err}");
+    }
+
+    #[test]
+    fn lax_mode_allows_unknown_prop() {
+        let f = parse("[resource.file.conf]\npath = \"/etc/x\"\nmod = \"0644\"\n");
+        assert!(validate_state_files(&[f], ConfigPolicy::lax()).is_ok());
+    }
+
+    #[test]
+    fn valid_config_passes_strict() {
+        let f = parse(
+            "[resource.file.conf]\npath = \"/etc/x\"\nmode = \"0644\"\nwhen = \"group.web\"\nafter = [\"pkg.nginx\"]\n",
+        );
+        assert!(validate_state_files(&[f], ConfigPolicy::strict()).is_ok());
+    }
 
     #[test]
     fn known_types_match_dispatcher() {
