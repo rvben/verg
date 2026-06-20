@@ -2,6 +2,27 @@ use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
 
+/// Rebuild the persisted sysctl.d content: keep comments and every line whose
+/// key (left of `=`) differs from `key`, then append `key = desired`.
+fn rebuild_sysctl_conf(existing: &str, key: &str, desired: &str) -> String {
+    let mut lines: Vec<String> = existing
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                return true;
+            }
+            match trimmed.split_once('=') {
+                Some((lhs, _)) => lhs.trim() != key,
+                None => true,
+            }
+        })
+        .map(String::from)
+        .collect();
+    lines.push(format!("{key} = {desired}"));
+    lines.join("\n") + "\n"
+}
+
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let key = resource
         .props
@@ -21,6 +42,12 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     // Check current value
     let output = run_cmd("sysctl", &["-n", key])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(Error::Resource(format!(
+            "failed to read sysctl key '{key}': {stderr}"
+        )));
+    }
     let current = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     let mut changes = Vec::new();
@@ -50,17 +77,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         if !has_correct_entry {
             changes.push(format!("persist {key} in {conf_path}"));
             if !dry_run {
-                // Keep existing entries for other keys, replace or append this key
-                let mut lines: Vec<String> = current_conf
-                    .lines()
-                    .filter(|l| {
-                        let trimmed = l.trim();
-                        trimmed.starts_with('#') || !trimmed.starts_with(key)
-                    })
-                    .map(String::from)
-                    .collect();
-                lines.push(format!("{key} = {desired}"));
-                let new_content = lines.join("\n") + "\n";
+                let new_content = rebuild_sysctl_conf(&current_conf, key, desired);
                 std::fs::write(conf_path, new_content)
                     .map_err(|e| Error::Resource(format!("failed to write {conf_path}: {e}")))?;
             }
@@ -126,5 +143,34 @@ mod tests {
         let result = execute(&resource, true);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("requires 'value'"));
+    }
+
+    #[test]
+    fn rebuild_replaces_only_exact_key() {
+        let existing = "# header\nnet.ipv4.ip_forward = 0\nnet.ipv4.ip_forward_use_pmtu = 1\n";
+        let out = rebuild_sysctl_conf(existing, "net.ipv4.ip_forward", "1");
+        // The prefix-sibling key must survive.
+        assert!(
+            out.contains("net.ipv4.ip_forward_use_pmtu = 1"),
+            "sibling lost: {out}"
+        );
+        // The target key is set to the new value exactly once.
+        assert!(
+            out.contains("net.ipv4.ip_forward = 1"),
+            "key not set: {out}"
+        );
+        assert_eq!(
+            out.matches("net.ipv4.ip_forward =").count(),
+            1,
+            "duplicate: {out}"
+        );
+        // Comments are preserved.
+        assert!(out.contains("# header"));
+    }
+
+    #[test]
+    fn rebuild_appends_when_absent() {
+        let out = rebuild_sysctl_conf("", "vm.swappiness", "10");
+        assert_eq!(out, "vm.swappiness = 10\n");
     }
 }
