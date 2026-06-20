@@ -80,6 +80,42 @@ fn should_push(has_version: bool, expected: Option<&str>, remote_hash: &str) -> 
     }
 }
 
+/// Parse the output of the combined preflight SSH command.
+///
+/// Each line is `key=value`. Keys `arch`, `hostname`, `os`, `os_release`, and
+/// `os_version` are inserted into the facts map with a `fact.` prefix (matching
+/// the former `gather_facts` output). The `version` key is returned separately
+/// as the raw version string (may be empty when no agent is installed yet).
+pub fn parse_preflight(
+    stdout: &str,
+) -> (std::collections::HashMap<String, String>, Option<String>) {
+    let mut facts = std::collections::HashMap::new();
+    let mut version: Option<String> = None;
+    for line in stdout.lines() {
+        if let Some((key, val)) = line.split_once('=') {
+            if key == "version" {
+                version = Some(val.to_string());
+            } else {
+                facts.insert(format!("fact.{key}"), val.to_string());
+            }
+        }
+    }
+    (facts, version)
+}
+
+/// True when the remote version stamp (trimmed) matches the running verg version.
+/// A missing, empty, or older stamp returns false, triggering an agent push.
+pub fn version_matches(remote: &str, current: &str) -> bool {
+    remote.trim() == current
+}
+
+/// SSH connection coordinates for a single host target.
+pub struct HostConn<'a> {
+    pub user: &'a str,
+    pub address: &'a str,
+    pub port: Option<u16>,
+}
+
 pub struct SshTransport {
     pub agent_dir: PathBuf,
     pub version: String,
@@ -185,10 +221,10 @@ impl SshTransport {
     /// Best-effort teardown of the ControlMaster for a given host target
     /// (`user@address [-p port]`). Called after all work for that host is done.
     /// Errors are silently ignored; this must never affect the host result.
-    pub fn teardown_control_master(&self, user: &str, address: &str, port: Option<u16>) {
-        let target = format!("{user}@{address}");
+    pub fn teardown_control_master(&self, conn: &HostConn<'_>) {
+        let target = format!("{}@{}", conn.user, conn.address);
         let mut args = self.control_master_args();
-        if let Some(p) = port {
+        if let Some(p) = conn.port {
             args.extend(["-p".into(), p.to_string()]);
         }
         // -O exit signals the master to shut down cleanly. Runs synchronously
@@ -199,17 +235,19 @@ impl SshTransport {
         let _ = std::fs::remove_dir_all(&self.control_dir);
     }
 
-    /// Gather basic system facts from the target in a single SSH command.
-    /// Returns a HashMap with keys like "fact.arch", "fact.hostname", etc.
-    pub async fn gather_facts(
+    /// Collect system facts and the installed agent version in a single SSH
+    /// round-trip. Returns the parsed facts map (keys prefixed `fact.*`) and
+    /// the raw version string (empty when no agent is installed).
+    ///
+    /// The fact-producing portion of the remote command is byte-identical to
+    /// the former `gather_facts` command so fact values are unchanged.
+    pub async fn preflight(
         &self,
-        user: &str,
-        address: &str,
-        port: Option<u16>,
-    ) -> Result<std::collections::HashMap<String, String>, Error> {
-        let target = format!("{user}@{address}");
+        conn: &HostConn<'_>,
+    ) -> Result<(std::collections::HashMap<String, String>, Option<String>), Error> {
+        let target = format!("{}@{}", conn.user, conn.address);
         let mut args = self.ssh_base_args();
-        if let Some(p) = port {
+        if let Some(p) = conn.port {
             args.extend(["-p".into(), p.to_string()]);
         }
         args.push(target);
@@ -218,7 +256,8 @@ impl SshTransport {
              echo \"hostname=$(hostname)\" && \
              echo \"os=$(. /etc/os-release 2>/dev/null && echo $ID)\" && \
              echo \"os_release=$(. /etc/os-release 2>/dev/null && echo $VERSION_CODENAME)\" && \
-             echo \"os_version=$(. /etc/os-release 2>/dev/null && echo $VERSION_ID)\""
+             echo \"os_version=$(. /etc/os-release 2>/dev/null && echo $VERSION_ID)\" && \
+             echo \"version=$(cat /usr/local/share/verg/version 2>/dev/null)\""
                 .into(),
         );
 
@@ -226,22 +265,16 @@ impl SshTransport {
             .args(&args)
             .output()
             .await
-            .map_err(|e| Error::Connection(format!("ssh facts: {e}")))?;
+            .map_err(|e| Error::Connection(format!("ssh preflight: {e}")))?;
 
         if !output.status.success() {
             return Err(Error::Connection(
-                "failed to gather facts from target".into(),
+                "failed to run preflight on target".into(),
             ));
         }
 
-        let mut facts = std::collections::HashMap::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Some((key, val)) = line.split_once('=') {
-                facts.insert(format!("fact.{key}"), val.to_string());
-            }
-        }
-
-        Ok(facts)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(parse_preflight(&stdout))
     }
 
     fn arch_to_target(arch: &str) -> Result<&'static str, Error> {
@@ -340,39 +373,10 @@ impl SshTransport {
         Ok(cached)
     }
 
-    async fn check_version(
-        &self,
-        user: &str,
-        address: &str,
-        port: Option<u16>,
-    ) -> Result<bool, Error> {
-        let target = format!("{user}@{address}");
+    async fn remote_agent_sha256(&self, conn: &HostConn<'_>) -> Result<String, Error> {
+        let target = format!("{}@{}", conn.user, conn.address);
         let mut args = self.ssh_base_args();
-        if let Some(p) = port {
-            args.extend(["-p".into(), p.to_string()]);
-        }
-        args.push(target);
-        args.push(format!("cat {VERSION_PATH} 2>/dev/null"));
-
-        let output = Command::new("ssh")
-            .args(&args)
-            .output()
-            .await
-            .map_err(|e| Error::Connection(format!("ssh to {address}: {e}")))?;
-
-        let remote_version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(remote_version == self.version)
-    }
-
-    async fn remote_agent_sha256(
-        &self,
-        user: &str,
-        address: &str,
-        port: Option<u16>,
-    ) -> Result<String, Error> {
-        let target = format!("{user}@{address}");
-        let mut args = self.ssh_base_args();
-        if let Some(p) = port {
+        if let Some(p) = conn.port {
             args.extend(["-p".into(), p.to_string()]);
         }
         args.extend([
@@ -383,24 +387,22 @@ impl SshTransport {
             .args(&args)
             .output()
             .await
-            .map_err(|e| Error::Connection(format!("ssh to {address}: {e}")))?;
+            .map_err(|e| Error::Connection(format!("ssh to {}: {e}", conn.address)))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.split_whitespace().next().unwrap_or("").to_string())
     }
 
     async fn push_binary(
         &self,
-        user: &str,
-        address: &str,
-        port: Option<u16>,
+        conn: &HostConn<'_>,
         agent_binary: &std::path::Path,
         expected: Option<&str>,
     ) -> Result<(), Error> {
-        let target = format!("{user}@{address}");
+        let target = format!("{}@{}", conn.user, conn.address);
 
         // Create directories
         let mut args = self.ssh_base_args();
-        if let Some(p) = port {
+        if let Some(p) = conn.port {
             args.extend(["-p".into(), p.to_string()]);
         }
         args.extend([
@@ -423,7 +425,7 @@ impl SshTransport {
         // Copy to a temp path beside the final binary (so mv is an atomic rename).
         let tmp_remote = format!("{AGENT_PATH}.tmp.{}", std::process::id());
         let mut scp_args = self.ssh_base_args();
-        if let Some(p) = port {
+        if let Some(p) = conn.port {
             scp_args.extend(["-P".into(), p.to_string()]);
         }
         scp_args.push(agent_binary.to_string_lossy().into_owned());
@@ -465,7 +467,7 @@ impl SshTransport {
             self.version
         );
         let mut args = self.ssh_base_args();
-        if let Some(p) = port {
+        if let Some(p) = conn.port {
             args.extend(["-p".into(), p.to_string()]);
         }
         args.extend([target, install_cmd]);
@@ -486,14 +488,12 @@ impl SshTransport {
 
     pub async fn execute(
         &self,
-        user: &str,
-        address: &str,
-        port: Option<u16>,
+        conn: &HostConn<'_>,
         bundle: &Bundle,
         dry_run: bool,
         arch: &str,
+        has_version: bool,
     ) -> Result<ExecResult, Error> {
-        let has_version = self.check_version(user, address, port).await?;
         let arch_target = Self::arch_to_target(arch)?;
         let expected = if self.skip_agent_checksum {
             None
@@ -501,18 +501,17 @@ impl SshTransport {
             crate::agent_checksums::expected_sha256(arch_target)
         };
         let needs_push = if has_version && expected.is_some() {
-            let remote = self.remote_agent_sha256(user, address, port).await?;
+            let remote = self.remote_agent_sha256(conn).await?;
             should_push(true, expected, &remote)
         } else {
             should_push(has_version, expected, "")
         };
         if needs_push {
             let agent_binary = self.agent_binary_for_arch(arch).await?;
-            self.push_binary(user, address, port, &agent_binary, expected)
-                .await?;
+            self.push_binary(conn, &agent_binary, expected).await?;
         }
 
-        let target = format!("{user}@{address}");
+        let target = format!("{}@{}", conn.user, conn.address);
         let bundle_toml = bundle.to_toml()?;
 
         let mut cmd_str = AGENT_PATH.to_string();
@@ -521,7 +520,7 @@ impl SshTransport {
         }
 
         let mut args = self.ssh_base_args();
-        if let Some(p) = port {
+        if let Some(p) = conn.port {
             args.extend(["-p".into(), p.to_string()]);
         }
         args.extend([target, cmd_str]);
@@ -563,6 +562,40 @@ impl SshTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_preflight_extracts_facts_and_version() {
+        let out = "arch=x86_64\nhostname=web1\nos=ubuntu\nos_release=jammy\nos_version=22.04\nversion=0.6.5\n";
+        let (facts, version) = parse_preflight(out);
+        assert_eq!(facts.get("fact.arch").map(String::as_str), Some("x86_64"));
+        assert_eq!(facts.get("fact.hostname").map(String::as_str), Some("web1"));
+        assert_eq!(facts.get("fact.os").map(String::as_str), Some("ubuntu"));
+        assert_eq!(
+            facts.get("fact.os_release").map(String::as_str),
+            Some("jammy")
+        );
+        assert_eq!(
+            facts.get("fact.os_version").map(String::as_str),
+            Some("22.04")
+        );
+        assert_eq!(version.as_deref(), Some("0.6.5"));
+    }
+
+    #[test]
+    fn parse_preflight_empty_version_is_none_or_empty() {
+        let out =
+            "arch=x86_64\nhostname=web1\nos=ubuntu\nos_release=jammy\nos_version=22.04\nversion=\n";
+        let (_facts, version) = parse_preflight(out);
+        assert!(version.as_deref().unwrap_or("").is_empty());
+    }
+
+    #[test]
+    fn version_matches_only_on_exact_current_version() {
+        assert!(version_matches("0.6.5", "0.6.5"));
+        assert!(!version_matches("", "0.6.5")); // fresh host
+        assert!(!version_matches("0.6.4", "0.6.5")); // stale agent
+        assert!(version_matches(" 0.6.5\n", "0.6.5")); // trimmed
+    }
 
     #[test]
     fn base_args_default_is_strict_yes() {

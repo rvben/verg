@@ -9,7 +9,7 @@ use crate::error::Error;
 use crate::inventory::{Inventory, selector};
 use crate::resources::{ResourceResult, ResourceStatus, RunSummary};
 use crate::state;
-use crate::transport::ssh::SshTransport;
+use crate::transport::ssh::{HostConn, SshTransport};
 
 pub struct Engine {
     pub transport: SshTransport,
@@ -176,15 +176,27 @@ impl Engine {
                 let host_address = host.address.clone();
                 let host_port = host.port;
                 let work = async {
-                    // Gather facts from target and inject into host vars
-                    let facts = transport
-                        .gather_facts(&host.user, &host.address, host.port)
-                        .await?;
+                    let conn = HostConn {
+                        user: &host.user,
+                        address: &host.address,
+                        port: host.port,
+                    };
+
+                    // One SSH round-trip gathers both system facts and the
+                    // installed agent version stamp, eliminating a second hop.
+                    let (facts, remote_version) = transport.preflight(&conn).await?;
 
                     let arch = facts
                         .get("fact.arch")
                         .cloned()
                         .unwrap_or_else(|| "x86_64".into());
+
+                    // Version matches when the remote stamp (trimmed) equals the
+                    // running verg version. Missing or empty means push is needed.
+                    let has_version = crate::transport::ssh::version_matches(
+                        remote_version.as_deref().unwrap_or(""),
+                        &transport.version,
+                    );
 
                     let mut host = host;
                     // Inject facts as variables (fact.arch, fact.hostname, etc.)
@@ -200,16 +212,14 @@ impl Engine {
                             .or_insert_with(|| toml::Value::String("true".into()));
                     }
 
+                    let conn = HostConn {
+                        user: &host.user,
+                        address: &host.address,
+                        port: host.port,
+                    };
                     let bundle = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
                     let result = transport
-                        .execute(
-                            &host.user,
-                            &host.address,
-                            host.port,
-                            &bundle,
-                            dry_run,
-                            &arch,
-                        )
+                        .execute(&conn, &bundle, dry_run, &arch, has_version)
                         .await?;
                     Ok::<RunSummary, Error>(result.summary)
                 };
@@ -227,7 +237,11 @@ impl Engine {
                 // background master exits immediately (rather than lingering
                 // for the ControlPersist duration). Done after all work for
                 // this host is complete, so no in-flight session uses the socket.
-                transport.teardown_control_master(&host_user, &host_address, host_port);
+                transport.teardown_control_master(&HostConn {
+                    user: &host_user,
+                    address: &host_address,
+                    port: host_port,
+                });
 
                 match result {
                     Ok(summary) => summary,
