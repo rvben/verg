@@ -60,6 +60,10 @@ struct Cli {
     #[arg(long, global = true)]
     skip_agent_checksum: bool,
 
+    /// Per-host timeout in seconds (a hung host fails instead of blocking the run)
+    #[arg(long, default_value = "600", global = true)]
+    timeout: u64,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -147,6 +151,17 @@ async fn main() {
     process::exit(code);
 }
 
+struct EngineConfig {
+    parallel: usize,
+    ssh_config: Option<PathBuf>,
+    agent_dir: Option<PathBuf>,
+    policy: verg::config::ConfigPolicy,
+    host_key_checking: HostKeyChecking,
+    known_hosts: Option<PathBuf>,
+    skip_agent_checksum: bool,
+    timeout_secs: u64,
+}
+
 async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
     let base_dir = cli.path.clone().unwrap_or_else(|| PathBuf::from("verg"));
     let policy = if cli.lax_config {
@@ -155,17 +170,20 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
         verg::config::ConfigPolicy::strict()
     };
 
+    let engine_config = EngineConfig {
+        parallel: cli.parallel.into(),
+        ssh_config: cli.ssh_config.clone(),
+        agent_dir: cli.agent_dir.clone(),
+        policy,
+        host_key_checking: cli.host_key_checking,
+        known_hosts: cli.ssh_known_hosts.clone(),
+        skip_agent_checksum: cli.skip_agent_checksum,
+        timeout_secs: cli.timeout,
+    };
+
     match cli.command {
         Command::Apply { targets } => {
-            let engine = build_engine(
-                cli.parallel.into(),
-                cli.ssh_config.clone(),
-                cli.agent_dir.clone(),
-                policy,
-                cli.host_key_checking,
-                cli.ssh_known_hosts.clone(),
-                cli.skip_agent_checksum,
-            )?;
+            let engine = build_engine(engine_config)?;
             commands::apply::run(&engine, &base_dir, &targets, cli.yes, output).await
         }
         Command::Diff {
@@ -174,27 +192,11 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
             offset,
             fields,
         } => {
-            let engine = build_engine(
-                cli.parallel.into(),
-                cli.ssh_config.clone(),
-                cli.agent_dir.clone(),
-                policy,
-                cli.host_key_checking,
-                cli.ssh_known_hosts.clone(),
-                cli.skip_agent_checksum,
-            )?;
+            let engine = build_engine(engine_config)?;
             commands::diff::run(&engine, &base_dir, &targets, limit, offset, fields, output).await
         }
         Command::Check { targets } => {
-            let engine = build_engine(
-                cli.parallel.into(),
-                cli.ssh_config.clone(),
-                cli.agent_dir.clone(),
-                policy,
-                cli.host_key_checking,
-                cli.ssh_known_hosts.clone(),
-                cli.skip_agent_checksum,
-            )?;
+            let engine = build_engine(engine_config)?;
             commands::check::run(&engine, &base_dir, &targets, output).await
         }
         Command::Schema => {
@@ -214,16 +216,8 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
     }
 }
 
-fn build_engine(
-    parallel: usize,
-    ssh_config: Option<PathBuf>,
-    agent_dir: Option<PathBuf>,
-    policy: verg::config::ConfigPolicy,
-    host_key_checking: HostKeyChecking,
-    known_hosts: Option<PathBuf>,
-    skip_agent_checksum: bool,
-) -> Result<Engine, Error> {
-    let agent_dir = match agent_dir {
+fn build_engine(cfg: EngineConfig) -> Result<Engine, Error> {
+    let agent_dir = match cfg.agent_dir {
         Some(dir) => dir,
         None => {
             // Default: look next to the verg binary, then ~/.local/share/verg/agents/
@@ -244,14 +238,15 @@ fn build_engine(
     let version = env!("CARGO_PKG_VERSION").to_string();
 
     let mut transport = SshTransport::new(agent_dir, version);
-    transport.ssh_config = ssh_config;
-    transport.host_key_checking = host_key_checking;
-    transport.known_hosts = known_hosts;
-    transport.skip_agent_checksum = skip_agent_checksum;
+    transport.ssh_config = cfg.ssh_config;
+    transport.host_key_checking = cfg.host_key_checking;
+    transport.known_hosts = cfg.known_hosts;
+    transport.skip_agent_checksum = cfg.skip_agent_checksum;
 
     Ok(Engine {
         transport,
-        parallel,
-        policy,
+        parallel: cfg.parallel,
+        policy: cfg.policy,
+        timeout_secs: cfg.timeout_secs,
     })
 }

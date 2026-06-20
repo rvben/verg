@@ -14,6 +14,7 @@ pub struct Engine {
     pub transport: SshTransport,
     pub parallel: usize,
     pub policy: crate::config::ConfigPolicy,
+    pub timeout_secs: u64,
 }
 
 #[derive(Debug)]
@@ -112,10 +113,11 @@ impl Engine {
             let sem = semaphore.clone();
 
             let base_dir = base_dir.to_path_buf();
+            let timeout_secs = self.timeout_secs;
             join_set.spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
                 let host_name = host.name.clone();
-                let result = async {
+                let work = async {
                     // Gather facts from target and inject into host vars
                     let facts = transport
                         .gather_facts(&host.user, &host.address, host.port)
@@ -140,8 +142,16 @@ impl Engine {
                         .execute(&host.user, &host.address, host.port, &bundle, dry_run)
                         .await?;
                     Ok::<RunSummary, Error>(result.summary)
-                }
-                .await;
+                };
+                let result =
+                    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), work)
+                        .await
+                    {
+                        Ok(inner) => inner,
+                        Err(_elapsed) => Err(Error::Connection(format!(
+                            "host timed out after {timeout_secs}s"
+                        ))),
+                    };
 
                 match result {
                     Ok(summary) => summary,
@@ -214,12 +224,53 @@ mod tests {
             transport: SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into()),
             parallel: 1,
             policy: crate::config::ConfigPolicy::strict(),
+            timeout_secs: 600,
         };
         let err = engine.run(dir.path(), "all", true).await.unwrap_err();
         assert_eq!(
             err.exit_code(),
             crate::error::exit_codes::INVALID_CONFIG,
             "typoed top-level key must fail as invalid_config, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn host_timeout_produces_failed_summary() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("hosts.toml"),
+            "[hosts.web1]\naddress = \"192.0.2.10\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("state")).unwrap();
+        std::fs::write(
+            dir.path().join("state").join("base.toml"),
+            "[resource.pkg.curl]\nname = \"curl\"\n",
+        )
+        .unwrap();
+
+        let engine = Engine {
+            transport: SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into()),
+            parallel: 1,
+            policy: crate::config::ConfigPolicy::strict(),
+            timeout_secs: 1,
+        };
+        let start = std::time::Instant::now();
+        let result = engine.run(dir.path(), "all", true).await.unwrap();
+        // The 1s tokio timeout fires before ssh's ConnectTimeout=10 to the
+        // non-routable TEST-NET address, proving the per-host timeout works.
+        assert_eq!(result.summaries.len(), 1);
+        let err = result.summaries[0].resources[0]
+            .error
+            .as_deref()
+            .unwrap_or("");
+        assert!(
+            err.contains("timed out"),
+            "expected a timeout error, got: {err}"
+        );
+        assert!(
+            start.elapsed().as_secs() < 8,
+            "timeout should fire well before ssh ConnectTimeout"
         );
     }
 }

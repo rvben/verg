@@ -452,6 +452,7 @@ impl SshTransport {
 
         let mut child = Command::new("ssh")
             .args(&args)
+            .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

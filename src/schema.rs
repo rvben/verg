@@ -16,7 +16,8 @@ pub fn run() {
             {"name": "--lax-config", "type": "boolean", "description": "Downgrade config validation errors (unknown keys/types) to warnings"},
             {"name": "--host-key-checking", "type": "string", "enum": ["yes", "accept-new", "no"], "default": "yes", "description": "SSH host key checking policy"},
             {"name": "--ssh-known-hosts", "type": "path", "description": "Path to a known_hosts file"},
-            {"name": "--skip-agent-checksum", "type": "boolean", "description": "Skip agent binary checksum verification (air-gapped or local builds)"}
+            {"name": "--skip-agent-checksum", "type": "boolean", "description": "Skip agent binary checksum verification (air-gapped or local builds)"},
+            {"name": "--timeout", "type": "integer", "default": 600, "description": "Per-host timeout in seconds"}
         ],
         "commands": [
             {
