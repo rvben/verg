@@ -229,6 +229,7 @@ The FQN for each resource is `type.name` (e.g. `pkg.nginx`, `file.nginx-conf`, `
 | `--path <PATH>` | `./verg` | Path to the verg project directory (`VERG_PATH`) |
 | `--parallel <N>` | `10` | Maximum parallel SSH connections |
 | `--ssh-config <PATH>` | - | Path to SSH config file (`VERG_SSH_CONFIG`) |
+| `--agent-dir <PATH>` | - | Directory containing verg-agent binaries per architecture (`VERG_AGENT_DIR`) |
 | `--host-key-checking <yes\|accept-new\|no>` | `yes` | SSH host key checking policy |
 | `--ssh-known-hosts <PATH>` | - | Path to a known_hosts file |
 | `--skip-agent-checksum` | - | Skip agent binary checksum verification (air-gapped or local builds) |
