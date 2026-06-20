@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_cmd};
 
 /// Run a command and return an error when it exits non-zero (its failure is
 /// not swallowed). `ctx` labels the error.
@@ -118,24 +118,11 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
         // If only metadata drifted, no re-download needed
         if changes.is_empty() || !changes.iter().any(|c| c.contains("re-download")) {
-            return Ok(ResourceResult {
-                resource_type: "download".into(),
-                name: resource.name.clone(),
-                status: if changes.is_empty() {
-                    ResourceStatus::Ok
-                } else {
-                    ResourceStatus::Changed
-                },
-                diff: if changes.is_empty() {
-                    None
-                } else {
-                    Some(changes.join(", "))
-                },
-                from: None,
-                to: None,
-                error: None,
-                output: None,
-            });
+            return Ok(ResourceResult::from_changes(
+                "download",
+                resource.name.clone(),
+                &changes,
+            ));
         }
     }
 

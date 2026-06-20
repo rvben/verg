@@ -1,6 +1,6 @@
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_cmd};
 
 #[cfg(test)]
 mod tests {
@@ -110,22 +110,9 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         }
     }
 
-    Ok(ResourceResult {
-        resource_type: "service".into(),
-        name: resource.name.clone(),
-        status: if changes.is_empty() {
-            ResourceStatus::Ok
-        } else {
-            ResourceStatus::Changed
-        },
-        diff: if changes.is_empty() {
-            None
-        } else {
-            Some(changes.join(", "))
-        },
-        from: None,
-        to: None,
-        error: None,
-        output: None,
-    })
+    Ok(ResourceResult::from_changes(
+        "service",
+        resource.name.clone(),
+        &changes,
+    ))
 }

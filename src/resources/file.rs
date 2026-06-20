@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_cmd};
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let path = resource
@@ -84,29 +84,17 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         }
     }
 
-    Ok(ResourceResult {
-        resource_type: "file".into(),
-        name: resource.name.clone(),
-        status: if changes.is_empty() {
-            ResourceStatus::Ok
-        } else {
-            ResourceStatus::Changed
-        },
-        diff: if changes.is_empty() {
-            None
-        } else {
-            Some(changes.join(", "))
-        },
-        from: None,
-        to: None,
-        error: None,
-        output: None,
-    })
+    Ok(ResourceResult::from_changes(
+        "file",
+        resource.name.clone(),
+        &changes,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::ResourceStatus;
     use std::collections::HashMap;
 
     fn resource(name: &str, props: HashMap<String, toml::Value>) -> ResolvedResource {

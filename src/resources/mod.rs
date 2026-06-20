@@ -172,6 +172,20 @@ impl ResourceResult {
         }
     }
 
+    /// Build an Ok result when `changes` is empty, otherwise a Changed result
+    /// whose diff is the comma-joined change list.
+    pub fn from_changes(
+        resource_type: impl Into<String>,
+        name: impl Into<String>,
+        changes: &[String],
+    ) -> Self {
+        if changes.is_empty() {
+            Self::ok(resource_type, name)
+        } else {
+            Self::changed(resource_type, name, changes.join(", "))
+        }
+    }
+
     /// A resource that failed, carrying the error message.
     pub fn failed(
         resource_type: impl Into<String>,
@@ -296,6 +310,21 @@ pub fn run_cmd_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_changes_empty_is_ok_no_diff() {
+        let r = ResourceResult::from_changes("file", "/x", &[]);
+        assert_eq!(r.status, ResourceStatus::Ok);
+        assert!(r.diff.is_none());
+    }
+
+    #[test]
+    fn from_changes_nonempty_is_changed_joined() {
+        let changes = vec!["mode 0644".to_string(), "owner root".to_string()];
+        let r = ResourceResult::from_changes("file", "/x", &changes);
+        assert_eq!(r.status, ResourceStatus::Changed);
+        assert_eq!(r.diff.as_deref(), Some("mode 0644, owner root"));
+    }
 
     #[test]
     fn resource_result_ok_constructor() {
