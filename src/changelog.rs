@@ -8,6 +8,9 @@ use crate::resources::RunSummary;
 /// Produce a changelog-safe copy: drop from/to/output bodies and truncate diff,
 /// so the log records that a resource changed without persisting secret bodies.
 pub fn redact_for_changelog(summaries: &[RunSummary]) -> Vec<RunSummary> {
+    // Policy: the changelog never persists payload bodies (from/to/output) for ANY resource -
+    // it records that a resource changed plus a short truncated diff, to keep the log compact
+    // and avoid inadvertently persisting secrets.
     summaries
         .iter()
         .map(|s| {

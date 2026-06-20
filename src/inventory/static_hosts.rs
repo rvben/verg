@@ -31,15 +31,15 @@ struct HostsFile {
 pub fn validate_host_field(label: &str, value: &str) -> Result<(), Error> {
     if value.starts_with('-') {
         return Err(Error::Config(format!(
-            "host {label} '{value}' must not start with '-' (would be parsed as an ssh option)"
+            "{label} '{value}' must not start with '-' (would be parsed as an ssh option)"
         )));
     }
     if !value
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '@' | '-'))
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '@' | '-' | '[' | ']'))
     {
         return Err(Error::Config(format!(
-            "host {label} '{value}' contains invalid characters (allowed: alphanumerics . _ : @ -)"
+            "{label} '{value}' contains invalid characters (allowed: alphanumerics . _ : @ - [ ])"
         )));
     }
     Ok(())
@@ -160,5 +160,12 @@ address = "192.168.1.10"
         assert!(validate_host_field("user", "root; rm -rf /").is_err());
         assert!(validate_host_field("address", "192.0.2.10").is_ok());
         assert!(validate_host_field("user", "deploy_user").is_ok());
+    }
+
+    #[test]
+    fn accepts_ipv6_addresses() {
+        assert!(validate_host_field("address", "::1").is_ok());
+        assert!(validate_host_field("address", "[2001:db8::1]").is_ok());
+        assert!(validate_host_field("address", "2001:db8::1").is_ok());
     }
 }

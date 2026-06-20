@@ -252,7 +252,6 @@ mod tests {
 
     #[tokio::test]
     async fn precancelled_run_skips_all_hosts() {
-        use std::sync::atomic::AtomicBool;
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("hosts.toml"),
