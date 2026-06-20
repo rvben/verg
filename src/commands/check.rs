@@ -1,4 +1,6 @@
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::engine::Engine;
 use crate::error::Error;
@@ -9,8 +11,11 @@ pub async fn run(
     base_dir: &Path,
     targets: &str,
     output: &OutputConfig,
+    cancel: Arc<AtomicBool>,
 ) -> Result<i32, Error> {
-    let result = engine.run(base_dir, targets, true).await?;
+    let result = engine
+        .run_cancellable(base_dir, targets, true, cancel)
+        .await?;
     if output.json {
         let envelope = serde_json::json!({
             "items": &result.summaries,

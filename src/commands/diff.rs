@@ -1,21 +1,30 @@
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::engine::{Engine, EngineResult};
 use crate::error::Error;
 use crate::output::OutputConfig;
 use crate::resources::ResourceStatus;
 
+pub struct DiffOptions {
+    pub limit: usize,
+    pub offset: usize,
+    pub fields: Option<String>,
+}
+
 pub async fn run(
     engine: &Engine,
     base_dir: &Path,
     targets: &str,
-    limit: usize,
-    offset: usize,
-    fields: Option<String>,
+    opts: DiffOptions,
     output: &OutputConfig,
+    cancel: Arc<AtomicBool>,
 ) -> Result<i32, Error> {
-    let result = engine.run(base_dir, targets, true).await?;
-    print_diff(&result, limit, offset, fields, output);
+    let result = engine
+        .run_cancellable(base_dir, targets, true, cancel)
+        .await?;
+    print_diff(&result, opts.limit, opts.offset, opts.fields, output);
     // diff succeeds with exit 0 when no changes (output with changes is still success),
     // and non-zero only on actual failures (connection errors etc.)
     if result.has_failures() {

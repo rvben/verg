@@ -1,5 +1,7 @@
 use std::io::IsTerminal;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use crate::engine::{Engine, EngineResult};
 use crate::error::Error;
@@ -12,13 +14,16 @@ pub async fn run(
     targets: &str,
     yes: bool,
     output: &OutputConfig,
+    cancel: Arc<AtomicBool>,
 ) -> Result<i32, Error> {
     if !yes && !std::io::stdin().is_terminal() {
         return Err(Error::ConfirmationRequired(
             "apply modifies infrastructure; pass --yes to confirm non-interactively".into(),
         ));
     }
-    let result = engine.run(base_dir, targets, false).await?;
+    let result = engine
+        .run_cancellable(base_dir, targets, false, cancel)
+        .await?;
     print_result(&result, output);
 
     if let Err(e) = crate::changelog::write_log(base_dir, &result.summaries) {

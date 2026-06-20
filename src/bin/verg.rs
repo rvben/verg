@@ -141,7 +141,16 @@ async fn main() {
     };
     let output = OutputConfig::new(cli.output.clone(), cli.json);
 
-    let code = match run(cli, &output).await {
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_watch = cancel.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            cancel_watch.store(true, std::sync::atomic::Ordering::SeqCst);
+            eprintln!("interrupt received: finishing in-flight hosts, skipping the rest");
+        }
+    });
+
+    let code = match run(cli, &output, cancel.clone()).await {
         Ok(code) => code,
         Err(e) => {
             let envelope = serde_json::json!({
@@ -160,6 +169,11 @@ async fn main() {
             e.exit_code()
         }
     };
+    let code = if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+        130
+    } else {
+        code
+    };
     process::exit(code);
 }
 
@@ -174,7 +188,11 @@ struct EngineConfig {
     timeout_secs: u64,
 }
 
-async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
+async fn run(
+    cli: Cli,
+    output: &OutputConfig,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<i32, Error> {
     let base_dir = cli.path.clone().unwrap_or_else(|| PathBuf::from("verg"));
     let policy = if cli.lax_config {
         verg::config::ConfigPolicy::lax()
@@ -196,7 +214,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
     match cli.command {
         Command::Apply { targets } => {
             let engine = build_engine(engine_config)?;
-            commands::apply::run(&engine, &base_dir, &targets, cli.yes, output).await
+            commands::apply::run(&engine, &base_dir, &targets, cli.yes, output, cancel).await
         }
         Command::Diff {
             targets,
@@ -205,11 +223,23 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
             fields,
         } => {
             let engine = build_engine(engine_config)?;
-            commands::diff::run(&engine, &base_dir, &targets, limit, offset, fields, output).await
+            commands::diff::run(
+                &engine,
+                &base_dir,
+                &targets,
+                commands::diff::DiffOptions {
+                    limit,
+                    offset,
+                    fields,
+                },
+                output,
+                cancel,
+            )
+            .await
         }
         Command::Check { targets } => {
             let engine = build_engine(engine_config)?;
-            commands::check::run(&engine, &base_dir, &targets, output).await
+            commands::check::run(&engine, &base_dir, &targets, output, cancel).await
         }
         Command::Schema => {
             verg::schema::run();

@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::task::JoinSet;
 
@@ -55,6 +56,22 @@ impl Engine {
         base_dir: &Path,
         target_selector: &str,
         dry_run: bool,
+    ) -> Result<EngineResult, Error> {
+        self.run_cancellable(
+            base_dir,
+            target_selector,
+            dry_run,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    }
+
+    pub async fn run_cancellable(
+        &self,
+        base_dir: &Path,
+        target_selector: &str,
+        dry_run: bool,
+        cancel: Arc<AtomicBool>,
     ) -> Result<EngineResult, Error> {
         let inventory = Inventory::load(base_dir)?;
 
@@ -114,11 +131,27 @@ impl Engine {
             transport.known_hosts = self.transport.known_hosts.clone();
             transport.skip_agent_checksum = self.transport.skip_agent_checksum;
             let sem = semaphore.clone();
+            let cancel = cancel.clone();
 
             let base_dir = base_dir.to_path_buf();
             let timeout_secs = self.timeout_secs;
             join_set.spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
+                let _permit = sem.acquire().await.expect("semaphore is never closed");
+                if cancel.load(Ordering::SeqCst) {
+                    return RunSummary::from_results(
+                        &host.name,
+                        vec![ResourceResult {
+                            resource_type: "connection".into(),
+                            name: host.name.clone(),
+                            status: ResourceStatus::Skipped,
+                            diff: None,
+                            from: None,
+                            to: None,
+                            output: None,
+                            error: Some("cancelled before start".into()),
+                        }],
+                    );
+                }
                 let host_name = host.name.clone();
                 let work = async {
                     // Gather facts from target and inject into host vars
@@ -216,6 +249,41 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn precancelled_run_skips_all_hosts() {
+        use std::sync::atomic::AtomicBool;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("hosts.toml"),
+            "[hosts.web1]\naddress = \"192.0.2.10\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("state")).unwrap();
+        std::fs::write(
+            dir.path().join("state").join("base.toml"),
+            "[resource.pkg.curl]\nname = \"curl\"\n",
+        )
+        .unwrap();
+
+        let engine = Engine {
+            transport: SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into()),
+            parallel: 1,
+            policy: crate::config::ConfigPolicy::strict(),
+            timeout_secs: 600,
+        };
+        let cancel = Arc::new(AtomicBool::new(true)); // already cancelled
+        let result = engine
+            .run_cancellable(dir.path(), "all", true, cancel)
+            .await
+            .unwrap();
+        // The single host was skipped (no SSH attempted), so no failures.
+        assert!(!result.has_failures(), "should skip, not fail");
+        assert_eq!(
+            result.summaries[0].resources[0].status,
+            ResourceStatus::Skipped
+        );
+    }
 
     #[tokio::test]
     async fn run_rejects_typoed_state_key_before_ssh() {
