@@ -21,13 +21,14 @@ Desired-state infrastructure convergence engine. A fast, stateless alternative t
 ## Install
 
 ```sh
+# Cargo (crates.io)
 cargo install verg
-```
 
-verg is also available on PyPI and via a Homebrew tap (see the badges above):
-
-```sh
+# PyPI
 pip install verg
+
+# Homebrew (tap)
+brew install rvben/tap/verg
 ```
 
 ## Quick Start
