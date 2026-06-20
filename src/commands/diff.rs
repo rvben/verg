@@ -59,6 +59,28 @@ fn is_pending_change(status: crate::resources::ResourceStatus) -> bool {
     matches!(status, ResourceStatus::Changed | ResourceStatus::Failed)
 }
 
+/// Page a slice by offset/limit, clamping to bounds.
+fn paginate<T>(items: &[T], limit: usize, offset: usize) -> &[T] {
+    let start = offset.min(items.len());
+    let end = start.saturating_add(limit).min(items.len());
+    &items[start..end]
+}
+
+/// Project a resource result's JSON to `type`/`name` plus the requested fields.
+fn project_resource(
+    r: &crate::resources::ResourceResult,
+    keep: &std::collections::HashSet<&str>,
+) -> serde_json::Value {
+    match serde_json::to_value(r).unwrap_or(serde_json::Value::Null) {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .filter(|(k, _)| k == "type" || k == "name" || keep.contains(k.as_str()))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 fn print_diff(
     result: &EngineResult,
     limit: usize,
@@ -66,24 +88,29 @@ fn print_diff(
     fields: Option<String>,
     output: &OutputConfig,
 ) {
+    let total = result.summaries.len();
+    let page = paginate(&result.summaries, limit, offset);
     if output.json {
-        let total = result.summaries.len();
-        let mut envelope = serde_json::json!({
-            "items": &result.summaries,
-            "total": total,
-            "limit": limit,
-            "offset": offset
-        });
-        if let Some(f) = &fields {
-            envelope["fields"] = serde_json::Value::String(f.clone());
-        }
+        let items: serde_json::Value =
+            if let Some(f) = &fields {
+                let keep: std::collections::HashSet<&str> = f.split(',').map(str::trim).collect();
+                serde_json::Value::Array(page.iter().map(|s| {
+                let res: Vec<serde_json::Value> =
+                    s.resources.iter().map(|r| project_resource(r, &keep)).collect();
+                serde_json::json!({"host": s.host, "summary": s.summary, "resources": res})
+            }).collect())
+            } else {
+                serde_json::to_value(page).unwrap_or(serde_json::Value::Null)
+            };
+        let envelope =
+            serde_json::json!({"items": items, "total": total, "limit": limit, "offset": offset});
         let json = serde_json::to_string_pretty(&envelope).unwrap_or_else(|_| "{}".to_string());
         println!("{json}");
     } else {
-        if result.summaries.is_empty() {
+        if page.is_empty() {
             println!("no hosts matched");
         }
-        for summary in &result.summaries {
+        for summary in page {
             for r in &summary.resources {
                 if !is_pending_change(r.status.clone()) {
                     continue;
@@ -157,5 +184,36 @@ mod tests {
         assert!(!is_pending_change(ResourceStatus::Skipped));
         assert!(is_pending_change(ResourceStatus::Changed));
         assert!(is_pending_change(ResourceStatus::Failed));
+    }
+
+    #[test]
+    fn paginate_slices_summaries() {
+        let s: Vec<u32> = (0..10).collect();
+        assert_eq!(paginate(&s, 3, 2), &s[2..5]);
+        assert_eq!(paginate(&s, 100, 8), &s[8..10]); // limit past end clamps
+        assert_eq!(paginate(&s, 3, 50), &[] as &[u32]); // offset past end -> empty
+    }
+
+    #[test]
+    fn project_resource_keeps_type_name_and_requested_only() {
+        use std::collections::HashSet;
+        let r = ResourceResult {
+            resource_type: "file".into(),
+            name: "conf".into(),
+            status: ResourceStatus::Changed,
+            diff: Some("mode".into()),
+            from: Some("old".into()),
+            to: None,
+            error: None,
+            output: None,
+        };
+        let keep: HashSet<&str> = ["diff"].into_iter().collect();
+        let v = project_resource(&r, &keep);
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("type"), "type always kept"); // serde rename of resource_type
+        assert!(obj.contains_key("name"), "name always kept");
+        assert!(obj.contains_key("diff"), "requested field kept");
+        assert!(!obj.contains_key("status"), "unrequested field dropped");
+        assert!(!obj.contains_key("from"), "unrequested field dropped");
     }
 }
