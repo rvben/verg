@@ -38,9 +38,9 @@ A resource with `handler = true` is only executed when another resource lists it
 | `daemon-reload` | `systemctl daemon-reload` |
 | `restart:<svc>` | `systemctl restart <svc>` |
 | `reload:<svc>` | `systemctl reload <svc>` |
-| `docker-restart:<path>` | `docker compose -f <path> restart` |
-| `docker-up:<path>` | `docker compose -f <path> up -d --remove-orphans` |
-| `docker:<path>` | alias for `docker-up:<path>` |
+| `docker-restart:<path>` | `docker compose -f <path>/docker-compose.yml restart` (`<path>` is the project directory) |
+| `docker-up:<path>` | `docker compose -f <path>/docker-compose.yml up -d` |
+| `docker:<path>` | alias for `docker-restart:<path>` |
 | bare service name | equivalent to `restart:<name>` |
 
 Each shorthand runs at most once per host per agent run (deduped within a single agent process). On a multi-host apply, each host runs it independently.
