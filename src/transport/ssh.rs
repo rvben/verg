@@ -356,6 +356,16 @@ impl SshTransport {
         // Verify the pushed temp file against the expected hash (when known),
         // then atomically install with mode 0700 and write the version file. On
         // any failure the temp file is removed so a bad copy is never trusted.
+
+        // Guard: reject a malformed embedded checksum before it reaches shell interpolation.
+        if let Some(hash) = expected
+            && (hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err(Error::Other(format!(
+                "refusing to install agent: embedded checksum is not a valid sha256: {hash}"
+            )));
+        }
+
         let verify = match expected {
             Some(hash) => format!(
                 "printf '%s  %s\\n' '{hash}' '{tmp_remote}' | sha256sum -c - >/dev/null && "

@@ -15,7 +15,8 @@ pub fn run() {
             {"name": "--yes", "type": "boolean", "description": "Skip confirmation prompts for destructive operations"},
             {"name": "--lax-config", "type": "boolean", "description": "Downgrade config validation errors (unknown keys/types) to warnings"},
             {"name": "--host-key-checking", "type": "string", "enum": ["yes", "accept-new", "no"], "default": "yes", "description": "SSH host key checking policy"},
-            {"name": "--ssh-known-hosts", "type": "path", "description": "Path to a known_hosts file"}
+            {"name": "--ssh-known-hosts", "type": "path", "description": "Path to a known_hosts file"},
+            {"name": "--skip-agent-checksum", "type": "boolean", "description": "Skip agent binary checksum verification (air-gapped or local builds)"}
         ],
         "commands": [
             {
