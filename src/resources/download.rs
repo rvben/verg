@@ -4,6 +4,17 @@ use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
 
+/// Run a command and return an error when it exits non-zero (its failure is
+/// not swallowed). `ctx` labels the error.
+fn run_checked(cmd: &str, args: &[&str], ctx: &str) -> Result<(), Error> {
+    let output = run_cmd(cmd, args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(Error::Resource(format!("{ctx} failed: {stderr}")));
+    }
+    Ok(())
+}
+
 /// Downloads a file from a URL and places it at the destination.
 ///
 /// Properties:
@@ -84,21 +95,23 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 if current_mode != desired_mode {
                     changes.push(format!("mode {current_mode:04o} -> {desired_mode:04o}"));
                     if !dry_run {
-                        run_cmd("chmod", &[mode_str, dest])?;
+                        run_checked("chmod", &[mode_str, dest], "chmod")?;
                     }
                 }
             }
         }
 
         // Verify owner if specified
-        if let Some(owner) = owner {
+        if let Some(owner) = owner
+            && Path::new(dest).exists()
+        {
             let ls_output = run_cmd("ls", &["-ld", dest])?;
             let ls_line = String::from_utf8_lossy(&ls_output.stdout);
             let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
             if current_owner != owner {
                 changes.push(format!("owner {current_owner} -> {owner}"));
                 if !dry_run {
-                    run_cmd("chown", &[owner, dest])?;
+                    run_checked("chown", &[owner, dest], "chown")?;
                 }
             }
         }
@@ -156,12 +169,12 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     // Set mode
     if let Some(mode_str) = mode_str {
-        run_cmd("chmod", &[mode_str, dest])?;
+        run_checked("chmod", &[mode_str, dest], "chmod")?;
     }
 
     // Set owner
     if let Some(owner) = owner {
-        run_cmd("chown", &[owner, dest])?;
+        run_checked("chown", &[owner, dest], "chown")?;
     }
 
     Ok(ResourceResult {
@@ -332,6 +345,24 @@ fn find_extracted_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_checked_errors_on_command_failure() {
+        // chmod on a path that does not exist exits non-zero.
+        let err = run_checked(
+            "chmod",
+            &["0644", "/nonexistent/verg/should/not/exist"],
+            "chmod",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("chmod"), "got: {err}");
+    }
+
+    #[test]
+    fn run_checked_ok_on_success() {
+        // `true` always succeeds.
+        assert!(run_checked("true", &[], "noop").is_ok());
+    }
 
     #[test]
     fn extracted_file_requires_name_match() {
