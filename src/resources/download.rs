@@ -44,6 +44,15 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         .unwrap_or(false);
 
     let checksum = resource.props.get("checksum").and_then(|v| v.as_str());
+
+    if extract && checksum.is_none() {
+        return Err(Error::Resource(
+            "download with extract = true requires a `checksum` (extracting an archive as root \
+             requires pinning its exact bytes)"
+                .into(),
+        ));
+    }
+
     let mode_str = resource.props.get("mode").and_then(|v| v.as_str());
     let owner = resource.props.get("owner").and_then(|v| v.as_str());
 
@@ -73,7 +82,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 use std::os::unix::fs::PermissionsExt;
                 let current_mode = meta.permissions().mode() & 0o7777;
                 if current_mode != desired_mode {
-                    changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
+                    changes.push(format!("mode {current_mode:04o} -> {desired_mode:04o}"));
                     if !dry_run {
                         run_cmd("chmod", &[mode_str, dest])?;
                     }
@@ -87,7 +96,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             let ls_line = String::from_utf8_lossy(&ls_output.stdout);
             let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
             if current_owner != owner {
-                changes.push(format!("owner {current_owner} → {owner}"));
+                changes.push(format!("owner {current_owner} -> {owner}"));
                 if !dry_run {
                     run_cmd("chown", &[owner, dest])?;
                 }
@@ -119,7 +128,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     if dry_run {
         if changes.is_empty() {
-            changes.push(format!("would download {url} → {dest}"));
+            changes.push(format!("would download {url} -> {dest}"));
         }
         return Ok(ResourceResult {
             resource_type: "download".into(),
@@ -168,66 +177,98 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 }
 
 fn download_and_extract(
-    resource: &ResolvedResource,
+    _resource: &ResolvedResource,
     url: &str,
     dest: &str,
     checksum: Option<&str>,
     changes: &mut Vec<String>,
 ) -> Result<(), Error> {
-    let tmp_path = format!("/tmp/verg-download-{}", resource.name);
-    let extract_dir = "/tmp/verg-extract";
+    use super::tempdir::ScopedTempDir;
 
-    let output = run_cmd("curl", &["-fSL", "-o", &tmp_path, url])?;
+    let dl_dir = ScopedTempDir::new("verg-download")?;
+    let extract = ScopedTempDir::new("verg-extract")?;
+    let tmp_path = dl_dir.path().join("archive");
+    let tmp_path = tmp_path.to_string_lossy().to_string();
+    let extract_dir = extract.path().to_string_lossy().to_string();
+
+    let output = run_cmd(
+        "curl",
+        &[
+            "-fSL",
+            "-m",
+            "300",
+            "--max-filesize",
+            "536870912",
+            "-o",
+            &tmp_path,
+            url,
+        ],
+    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::Resource(format!("download failed: {stderr}")));
     }
 
+    // checksum is guaranteed Some for the extract path (enforced in execute).
     verify_checksum(&tmp_path, checksum)?;
 
-    // Detect archive type and extract
-    if tmp_path.ends_with(".zip") || url.ends_with(".zip") {
-        let output = run_cmd("unzip", &["-o", &tmp_path, "-d", extract_dir])?;
+    if url.ends_with(".zip") {
+        // -o overwrite, -d into our private dir. unzip does not restore owner.
+        let output = run_cmd("unzip", &["-o", &tmp_path, "-d", &extract_dir])?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let _ = std::fs::remove_file(&tmp_path);
             return Err(Error::Resource(format!("unzip failed: {stderr}")));
         }
     } else if url.ends_with(".tar.gz") || url.ends_with(".tgz") {
-        run_cmd("mkdir", &["-p", extract_dir])?;
-        let output = run_cmd("tar", &["-xzf", &tmp_path, "-C", extract_dir])?;
+        let output = run_cmd(
+            "tar",
+            &[
+                "--no-same-owner",
+                "--no-same-permissions",
+                "--no-overwrite-dir",
+                "-xzf",
+                &tmp_path,
+                "-C",
+                &extract_dir,
+            ],
+        )?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let _ = std::fs::remove_file(&tmp_path);
             return Err(Error::Resource(format!("tar extract failed: {stderr}")));
         }
     } else {
-        let _ = std::fs::remove_file(&tmp_path);
         return Err(Error::Resource(format!(
             "unsupported archive format for {url}. Supported: .zip, .tar.gz, .tgz"
         )));
     }
 
-    // Find the extracted binary matching the resource name or dest basename
     let dest_basename = Path::new(dest)
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let extracted = find_extracted_file(extract_dir, &dest_basename)?;
+    let extracted = find_extracted_file(&extract_dir, &dest_basename)?;
 
-    let output = run_cmd("cp", &[&extracted.to_string_lossy(), dest])?;
+    // Reject a match that resolves outside our extraction dir (symlink escape).
+    let canon_extract = std::fs::canonicalize(&extract_dir)
+        .map_err(|e| Error::Resource(format!("failed to resolve extract dir: {e}")))?;
+    let canon_file = std::fs::canonicalize(&extracted)
+        .map_err(|e| Error::Resource(format!("failed to resolve extracted file: {e}")))?;
+    if !canon_file.starts_with(&canon_extract) {
+        return Err(Error::Resource(format!(
+            "refusing to install '{}': extracted path escapes the extraction directory",
+            extracted.display()
+        )));
+    }
+
+    let output = run_cmd("cp", &[&canon_file.to_string_lossy(), dest])?;
     if !output.status.success() {
         return Err(Error::Resource(format!(
             "failed to copy extracted file to {dest}"
         )));
     }
 
-    // Cleanup
-    let _ = std::fs::remove_file(&tmp_path);
-    let _ = std::fs::remove_dir_all(extract_dir);
-
-    changes.push(format!("downloaded and extracted → {dest}"));
+    changes.push(format!("downloaded and extracted -> {dest}"));
     Ok(())
 }
 
@@ -245,7 +286,7 @@ fn download_direct(
 
     verify_checksum(dest, checksum)?;
 
-    changes.push(format!("downloaded → {dest}"));
+    changes.push(format!("downloaded -> {dest}"));
     Ok(())
 }
 
@@ -270,30 +311,81 @@ fn find_extracted_file(
     extract_dir: &str,
     dest_basename: &str,
 ) -> Result<std::path::PathBuf, Error> {
-    let mut found = None;
+    let mut names = Vec::new();
+    let entries = std::fs::read_dir(extract_dir)
+        .map_err(|e| Error::Resource(format!("failed to read {extract_dir}: {e}")))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Exact match wins immediately.
+        if name == dest_basename {
+            return Ok(entry.path());
+        }
+        names.push(name);
+    }
+    Err(Error::Resource(format!(
+        "no extracted file named '{dest_basename}' (archive contained: {}). \
+         Set `dest` to one of these names so verg knows which file to install.",
+        names.join(", ")
+    )))
+}
 
-    if let Ok(entries) = std::fs::read_dir(extract_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name == dest_basename || name.starts_with(dest_basename) {
-                found = Some(entry.path());
-                break;
-            }
-        }
-        // If not found by name, take the first regular file
-        if found.is_none()
-            && let Ok(entries) = std::fs::read_dir(extract_dir)
-        {
-            for entry in entries.flatten() {
-                if entry.path().is_file() {
-                    found = Some(entry.path());
-                    break;
-                }
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracted_file_requires_name_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // Two unrelated files, neither matching the requested basename.
+        std::fs::write(dir.path().join("LICENSE"), b"x").unwrap();
+        std::fs::write(dir.path().join("README.md"), b"y").unwrap();
+        let err = find_extracted_file(&dir.path().to_string_lossy(), "mytool").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("LICENSE") || msg.contains("README"),
+            "got: {msg}"
+        );
+        assert!(
+            msg.contains("mytool"),
+            "error should name the requested file: {msg}"
+        );
     }
 
-    found.ok_or_else(|| Error::Resource("no files found after extraction".into()))
+    #[test]
+    fn extracted_file_matches_by_basename() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("mytool"), b"bin").unwrap();
+        std::fs::write(dir.path().join("LICENSE"), b"x").unwrap();
+        let found = find_extracted_file(&dir.path().to_string_lossy(), "mytool").unwrap();
+        assert_eq!(found.file_name().unwrap(), "mytool");
+    }
+
+    #[test]
+    fn extract_without_checksum_is_rejected() {
+        // Extracting an archive as root requires a pinned checksum.
+        let mut props = std::collections::HashMap::new();
+        props.insert(
+            "url".to_string(),
+            toml::Value::String("https://example.test/a.tar.gz".into()),
+        );
+        props.insert(
+            "dest".to_string(),
+            toml::Value::String("/opt/mytool".into()),
+        );
+        props.insert("extract".to_string(), toml::Value::Boolean(true));
+        let r = ResolvedResource {
+            resource_type: "download".into(),
+            name: "mytool".into(),
+            props,
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+        };
+        let err = execute(&r, true).unwrap_err();
+        assert!(err.to_string().contains("checksum"), "got: {err}");
+    }
 }
 
 fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error> {
