@@ -140,7 +140,7 @@ async fn main() {
                         .to_string()
                 })
             );
-            process::exit(e.exit_code());
+            process::exit(verg::error::exit_codes::INVALID_CONFIG);
         }
     };
     let output = OutputConfig::new(cli.output.clone(), cli.json);

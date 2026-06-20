@@ -32,10 +32,29 @@ impl EngineResult {
         self.summaries.iter().any(|s| s.summary.changed > 0)
     }
 
+    /// True when every host failed purely on connectivity (no host did real work
+    /// and every failure is a `connection`-type resource). The actionable signal
+    /// is "could not reach the targets", which maps to exit 4.
+    pub fn is_connection_only_failure(&self) -> bool {
+        !self.summaries.is_empty()
+            && self.summaries.iter().all(|s| {
+                s.summary.failed > 0
+                    && s.summary.ok == 0
+                    && s.summary.changed == 0
+                    && s.resources
+                        .iter()
+                        .filter(|r| r.status == ResourceStatus::Failed)
+                        .all(|r| r.resource_type == "connection")
+            })
+    }
+
     /// Compute the process exit code based on the run outcome.
     /// Failures take priority over changes.
     pub fn exit_code(&self) -> i32 {
         use crate::error::exit_codes;
+        if self.is_connection_only_failure() {
+            return crate::error::exit_codes::CONNECTION_ERROR;
+        }
         if self.has_failures() {
             if self.has_changes() || self.summaries.iter().any(|s| s.summary.ok > 0) {
                 exit_codes::PARTIAL_FAILURE
@@ -249,6 +268,66 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn failed_summary(host: &str, rtype: &str) -> RunSummary {
+        RunSummary::from_results(
+            host,
+            vec![ResourceResult {
+                resource_type: rtype.into(),
+                name: host.into(),
+                status: ResourceStatus::Failed,
+                diff: None,
+                from: None,
+                to: None,
+                output: None,
+                error: Some("boom".into()),
+            }],
+        )
+    }
+
+    #[test]
+    fn connection_only_failure_exits_connection_error() {
+        let r = EngineResult {
+            summaries: vec![
+                failed_summary("a", "connection"),
+                failed_summary("b", "connection"),
+            ],
+        };
+        assert!(r.is_connection_only_failure());
+        assert_eq!(r.exit_code(), crate::error::exit_codes::CONNECTION_ERROR);
+    }
+
+    #[test]
+    fn resource_failure_is_not_connection_error() {
+        let r = EngineResult {
+            summaries: vec![failed_summary("a", "pkg")],
+        };
+        assert!(!r.is_connection_only_failure());
+        assert_ne!(r.exit_code(), crate::error::exit_codes::CONNECTION_ERROR);
+    }
+
+    #[test]
+    fn one_good_host_plus_one_unreachable_is_not_connection_only() {
+        // A host that succeeded (or did nothing) alongside an unreachable host is
+        // a PARTIAL situation, not a pure connection failure.
+        let ok = RunSummary::from_results(
+            "a",
+            vec![ResourceResult {
+                resource_type: "pkg".into(),
+                name: "x".into(),
+                status: ResourceStatus::Ok,
+                diff: None,
+                from: None,
+                to: None,
+                output: None,
+                error: None,
+            }],
+        );
+        let r = EngineResult {
+            summaries: vec![ok, failed_summary("b", "connection")],
+        };
+        assert!(!r.is_connection_only_failure());
+    }
 
     #[tokio::test]
     async fn precancelled_run_skips_all_hosts() {
