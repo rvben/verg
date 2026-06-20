@@ -108,66 +108,50 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    if let Some(desired_owner) = owner {
-        if target.exists() {
-            let current_uid = std::fs::metadata(target)
-                .map_err(|e| Error::Resource(format!("failed to stat {path}: {e}")))?
-                .uid();
+    if (owner.is_some() || group.is_some()) && target.exists() {
+        // MetadataExt (uid/gid) is already imported at the top of this file.
+        let meta = std::fs::metadata(target)
+            .map_err(|e| Error::Resource(format!("failed to stat {path}: {e}")))?;
 
-            // Resolve desired owner to UID for comparison
-            let desired_uid = resolve_uid(desired_owner);
-            let needs_change = match desired_uid {
-                Some(uid) => current_uid != uid,
+        // Owner matches: compare by UID when numeric, else by name via `ls`.
+        let owner_matches = match owner {
+            Some(o) => match resolve_uid(o) {
+                Some(uid) => meta.uid() == uid,
                 None => {
-                    // Compare by name via ls
-                    let output = run_cmd("ls", &["-ld", path])?;
-                    let ls_line = String::from_utf8_lossy(&output.stdout);
-                    let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
-                    current_owner != desired_owner
+                    let out = run_cmd("ls", &["-ld", path])?;
+                    let line = String::from_utf8_lossy(&out.stdout);
+                    line.split_whitespace().nth(2).unwrap_or("") == o
                 }
-            };
+            },
+            None => true,
+        };
 
-            if needs_change {
-                let chown_arg = match group {
-                    Some(g) => format!("{desired_owner}:{g}"),
-                    None => desired_owner.to_string(),
-                };
-                changes.push(format!("owner → {chown_arg}"));
-                if !dry_run {
-                    let mut args = vec![];
-                    if recurse {
-                        args.push("-R");
-                    }
-                    args.push(&chown_arg);
-                    args.push(path);
-                    let output = run_cmd("chown", &args)?;
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        return Err(Error::Resource(format!("chown failed: {stderr}")));
-                    }
+        // Group matches: compare by GID when numeric, else by name via `ls`.
+        let group_matches = match group {
+            Some(g) => match g.parse::<u32>().ok() {
+                Some(gid) => meta.gid() == gid,
+                None => {
+                    let out = run_cmd("ls", &["-ld", path])?;
+                    let line = String::from_utf8_lossy(&out.stdout);
+                    line.split_whitespace().nth(3).unwrap_or("") == g
                 }
-            }
-        }
-    } else if let Some(desired_group) = group
-        && target.exists()
-    {
-        let output = run_cmd("ls", &["-ld", path])?;
-        let ls_line = String::from_utf8_lossy(&output.stdout);
-        let current_group = ls_line.split_whitespace().nth(3).unwrap_or("");
-        if current_group != desired_group {
-            let chgrp_target = format!(":{desired_group}");
-            changes.push(format!("group → {desired_group}"));
+            },
+            None => true,
+        };
+
+        if let Some(arg) = ownership_action(owner, owner_matches, group, group_matches) {
+            changes.push(format!("owner/group -> {arg}"));
             if !dry_run {
                 let mut args = vec![];
                 if recurse {
                     args.push("-R");
                 }
-                args.push(&chgrp_target);
+                args.push(arg.as_str());
                 args.push(path);
                 let output = run_cmd("chown", &args)?;
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(Error::Resource(format!("chgrp failed: {stderr}")));
+                    return Err(Error::Resource(format!("chown failed: {stderr}")));
                 }
             }
         }
@@ -196,4 +180,80 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 /// Try to parse a string as a numeric UID.
 fn resolve_uid(owner: &str) -> Option<u32> {
     owner.parse::<u32>().ok()
+}
+
+/// Build the `chown` target argument from optional owner and group.
+fn build_chown_arg(owner: Option<&str>, group: Option<&str>) -> Option<String> {
+    match (owner, group) {
+        (Some(o), Some(g)) => Some(format!("{o}:{g}")),
+        (Some(o), None) => Some(o.to_string()),
+        (None, Some(g)) => Some(format!(":{g}")),
+        (None, None) => None,
+    }
+}
+
+/// Decide the `chown` arg given whether owner/group are specified and whether
+/// each already matches. Returns the arg when owner OR group drifts, else None.
+/// Group drift triggers a chown even when owner already matches.
+fn ownership_action(
+    owner: Option<&str>,
+    owner_matches: bool,
+    group: Option<&str>,
+    group_matches: bool,
+) -> Option<String> {
+    let owner_drift = owner.is_some() && !owner_matches;
+    let group_drift = group.is_some() && !group_matches;
+    if owner_drift || group_drift {
+        build_chown_arg(owner, group)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chown_arg_combines_owner_and_group() {
+        assert_eq!(
+            build_chown_arg(Some("deploy"), Some("docker")).as_deref(),
+            Some("deploy:docker")
+        );
+        assert_eq!(
+            build_chown_arg(Some("deploy"), None).as_deref(),
+            Some("deploy")
+        );
+        assert_eq!(
+            build_chown_arg(None, Some("docker")).as_deref(),
+            Some(":docker")
+        );
+        assert_eq!(build_chown_arg(None, None), None);
+    }
+
+    #[test]
+    fn group_drift_triggers_chown_even_when_owner_matches() {
+        // The W2-6 bug: owner already correct, group wrong -> must still chown.
+        assert_eq!(
+            ownership_action(Some("deploy"), true, Some("docker"), false).as_deref(),
+            Some("deploy:docker")
+        );
+    }
+
+    #[test]
+    fn no_drift_means_no_chown() {
+        assert_eq!(
+            ownership_action(Some("deploy"), true, Some("docker"), true),
+            None
+        );
+        assert_eq!(ownership_action(None, true, None, true), None);
+    }
+
+    #[test]
+    fn owner_drift_alone_triggers_chown() {
+        assert_eq!(
+            ownership_action(Some("deploy"), false, None, true).as_deref(),
+            Some("deploy")
+        );
+    }
 }
