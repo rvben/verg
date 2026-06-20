@@ -323,9 +323,11 @@ mod tests {
     #[test]
     fn resource_result_failed_constructor() {
         let r = ResourceResult::failed("cmd", "deploy", "boom");
+        assert_eq!(r.resource_type, "cmd");
+        assert_eq!(r.name, "deploy");
         assert_eq!(r.status, ResourceStatus::Failed);
         assert_eq!(r.error.as_deref(), Some("boom"));
-        assert!(r.diff.is_none());
+        assert!(r.diff.is_none() && r.from.is_none() && r.to.is_none() && r.output.is_none());
     }
 
     #[test]
