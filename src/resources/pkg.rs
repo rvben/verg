@@ -22,13 +22,26 @@ fn detect_pkg_manager() -> Result<PkgManager, Error> {
     Err(Error::Resource("no supported package manager found".into()))
 }
 
+/// True only when `dpkg -s` reports a fully-installed package. `dpkg -s`
+/// exits 0 even for `deinstall ok config-files` (removed, config retained),
+/// so the exit code alone is not sufficient.
+fn dpkg_reports_installed(status_output: &str) -> bool {
+    status_output.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("Status:") && line.contains("install ok installed")
+    })
+}
+
 fn is_installed(mgr: &PkgManager, name: &str) -> Result<bool, Error> {
-    let output = match mgr {
-        PkgManager::Apt => run_cmd("dpkg", &["-s", name])?,
-        PkgManager::Dnf => run_cmd("rpm", &["-q", name])?,
-        PkgManager::Pacman => run_cmd("pacman", &["-Qi", name])?,
-    };
-    Ok(output.status.success())
+    match mgr {
+        PkgManager::Apt => {
+            let output = run_cmd("dpkg", &["-s", name])?;
+            Ok(output.status.success()
+                && dpkg_reports_installed(&String::from_utf8_lossy(&output.stdout)))
+        }
+        PkgManager::Dnf => Ok(run_cmd("rpm", &["-q", name])?.status.success()),
+        PkgManager::Pacman => Ok(run_cmd("pacman", &["-Qi", name])?.status.success()),
+    }
 }
 
 fn update_cache(mgr: &PkgManager) -> Result<(), Error> {
@@ -76,6 +89,29 @@ fn remove(mgr: &PkgManager, name: &str) -> Result<(), Error> {
         Err(Error::Resource(format!(
             "failed to remove {name}: {stderr}"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dpkg_installed_status_is_recognized() {
+        let installed = "Package: nginx\nStatus: install ok installed\nVersion: 1.0\n";
+        assert!(dpkg_reports_installed(installed));
+    }
+
+    #[test]
+    fn dpkg_config_files_status_is_not_installed() {
+        // `apt-get remove` (not purge) leaves this state; binaries are gone.
+        let config_files = "Package: nginx\nStatus: deinstall ok config-files\nVersion: 1.0\n";
+        assert!(!dpkg_reports_installed(config_files));
+    }
+
+    #[test]
+    fn dpkg_empty_output_is_not_installed() {
+        assert!(!dpkg_reports_installed(""));
     }
 }
 
