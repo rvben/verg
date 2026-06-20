@@ -44,6 +44,11 @@ pub fn read_bounded<R: std::io::Read>(reader: R, max: usize) -> Result<String, E
 pub const REGISTER_SENTINEL: &str = "__VERG_REG_";
 pub const REGISTER_SENTINEL_END: &str = "__VERG_END__";
 
+/// Parse an octal mode string (e.g. "0644") into its numeric value.
+pub fn parse_octal_mode(mode: &str) -> Result<u32, Error> {
+    u32::from_str_radix(mode, 8).map_err(|_| Error::Resource(format!("invalid mode: {mode}")))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ResourceStatus {
@@ -504,6 +509,18 @@ mod tests {
         assert_eq!(summary.summary.changed, 1);
         assert_eq!(summary.summary.failed, 1);
         assert_eq!(summary.summary.skipped, 0);
+    }
+
+    #[test]
+    fn parse_octal_mode_valid() {
+        assert_eq!(parse_octal_mode("0644").unwrap(), 0o644);
+        assert_eq!(parse_octal_mode("755").unwrap(), 0o755);
+    }
+
+    #[test]
+    fn parse_octal_mode_invalid() {
+        let err = parse_octal_mode("xyz").unwrap_err();
+        assert!(err.to_string().contains("invalid mode: xyz"), "got: {err}");
     }
 
     #[test]

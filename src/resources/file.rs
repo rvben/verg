@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
+use super::{ResolvedResource, ResourceResult, parse_octal_mode, run_checked, run_cmd};
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let path = resource.prop_str_required("path")?;
@@ -43,8 +43,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     }
 
     if let Some(mode_str) = resource.props.get("mode").and_then(|v| v.as_str()) {
-        let desired_mode = u32::from_str_radix(mode_str, 8)
-            .map_err(|_| Error::Resource(format!("invalid mode: {mode_str}")))?;
+        let desired_mode = parse_octal_mode(mode_str)?;
         if target.exists() {
             let current_mode = std::fs::metadata(target)
                 .map_err(|e| Error::Resource(format!("failed to stat {path}: {e}")))?

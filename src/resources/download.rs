@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
+use super::{ResolvedResource, ResourceResult, parse_octal_mode, run_checked, run_cmd};
 
 /// Downloads a file from a URL and places it at the destination.
 ///
@@ -60,8 +60,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
         // Verify mode if specified
         if let Some(mode_str) = mode_str {
-            let desired_mode = u32::from_str_radix(mode_str, 8)
-                .map_err(|_| Error::Resource(format!("invalid mode: {mode_str}")))?;
+            let desired_mode = parse_octal_mode(mode_str)?;
             if let Ok(meta) = std::fs::metadata(dest) {
                 use std::os::unix::fs::PermissionsExt;
                 let current_mode = meta.permissions().mode() & 0o7777;
