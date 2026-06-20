@@ -1,4 +1,5 @@
 pub mod apt_repo;
+pub mod atomic;
 pub mod cmd;
 pub mod cron;
 pub mod dag;
