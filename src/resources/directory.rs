@@ -15,17 +15,9 @@ use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 ///   recurse  - Apply ownership recursively (default: false)
 ///   state    - "present" or "absent" (default: "present")
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let path = resource
-        .props
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("directory resource requires 'path'".into()))?;
+    let path = resource.prop_str_required("path")?;
 
-    let state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("present");
+    let state = resource.prop_str_or("state", "present");
 
     let target = Path::new(path);
 
@@ -83,11 +75,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     // Check and set ownership
     let owner = resource.props.get("owner").and_then(|v| v.as_str());
     let group = resource.props.get("group").and_then(|v| v.as_str());
-    let recurse = resource
-        .props
-        .get("recurse")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let recurse = resource.prop_bool_or("recurse", false);
 
     if (owner.is_some() || group.is_some()) && target.exists() {
         // MetadataExt (uid/gid) is already imported at the top of this file.

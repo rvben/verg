@@ -15,33 +15,17 @@ use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 ///   checksum - Optional sha256 checksum to verify download
 ///   state    - "present" or "absent" (default: "present")
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let url = resource
-        .props
-        .get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("download resource requires 'url'".into()))?;
+    let url = resource.prop_str_required("url")?;
 
-    let dest = resource
-        .props
-        .get("dest")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("download resource requires 'dest'".into()))?;
+    let dest = resource.prop_str_required("dest")?;
 
-    let state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("present");
+    let state = resource.prop_str_or("state", "present");
 
     if state == "absent" {
         return remove(dest, &resource.name, dry_run);
     }
 
-    let extract = resource
-        .props
-        .get("extract")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let extract = resource.prop_bool_or("extract", false);
 
     let checksum = resource.props.get("checksum").and_then(|v| v.as_str());
 

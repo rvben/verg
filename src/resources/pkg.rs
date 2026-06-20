@@ -118,11 +118,7 @@ mod tests {
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let mgr = detect_pkg_manager()?;
-    let state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("present");
+    let state = resource.prop_str_or("state", "present");
 
     let names: Vec<String> = if let Some(toml::Value::Array(arr)) = resource.props.get("names") {
         arr.iter()

@@ -19,17 +19,9 @@ use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 /// signing key, apply the resource with `state = "absent"` (removes the keyring
 /// and list) and then `state = "present"` to fetch the new key.
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let name = resource
-        .props
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("apt_repo resource requires 'name'".into()))?;
+    let name = resource.prop_str_required("name")?;
 
-    let state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("present");
+    let state = resource.prop_str_or("state", "present");
 
     let keyring_path = format!("/etc/apt/keyrings/{name}.asc");
     let list_path = format!("/etc/apt/sources.list.d/{name}.list");
@@ -38,29 +30,13 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         return remove(name, &keyring_path, &list_path, dry_run);
     }
 
-    let url = resource
-        .props
-        .get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("apt_repo resource requires 'url'".into()))?;
+    let url = resource.prop_str_required("url")?;
 
-    let gpg_key = resource
-        .props
-        .get("gpg_key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("apt_repo resource requires 'gpg_key'".into()))?;
+    let gpg_key = resource.prop_str_required("gpg_key")?;
 
-    let component = resource
-        .props
-        .get("component")
-        .and_then(|v| v.as_str())
-        .unwrap_or("stable");
+    let component = resource.prop_str_or("component", "stable");
 
-    let arch = resource
-        .props
-        .get("arch")
-        .and_then(|v| v.as_str())
-        .unwrap_or("amd64");
+    let arch = resource.prop_str_or("arch", "amd64");
 
     // Detect suite from the system if not specified
     let suite = if let Some(s) = resource.props.get("suite").and_then(|v| v.as_str()) {

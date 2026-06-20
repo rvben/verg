@@ -9,11 +9,7 @@ pub fn execute(
     dry_run: bool,
     notified: bool,
 ) -> Result<ResourceResult, Error> {
-    let command = resource
-        .props
-        .get("command")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("cmd resource requires 'command'".into()))?;
+    let command = resource.prop_str_required("command")?;
 
     let creates = resource.props.get("creates").and_then(|v| v.as_str());
     let unless = resource.props.get("unless").and_then(|v| v.as_str());

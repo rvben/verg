@@ -62,17 +62,9 @@ fn systemctl(action: &str, name: &str) -> Result<(), Error> {
 }
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let name = resource
-        .props
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("service resource requires 'name'".into()))?;
+    let name = resource.prop_str_required("name")?;
 
-    let desired_state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("running");
+    let desired_state = resource.prop_str_or("state", "running");
 
     let desired_enabled = resource.props.get("enabled").and_then(|v| v.as_bool());
 

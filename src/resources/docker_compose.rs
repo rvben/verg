@@ -12,23 +12,11 @@ use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 ///   state        - "up" or "down" (default: "up")
 ///   pull         - Pull images before starting (default: true)
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let project_dir = resource
-        .props
-        .get("project_dir")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("docker_compose resource requires 'project_dir'".into()))?;
+    let project_dir = resource.prop_str_required("project_dir")?;
 
-    let state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("up");
+    let state = resource.prop_str_or("state", "up");
 
-    let pull = resource
-        .props
-        .get("pull")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let pull = resource.prop_bool_or("pull", true);
 
     let compose_path = format!("{project_dir}/docker-compose.yml");
 

@@ -208,11 +208,7 @@ fn build_file_content(
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     validate_name(&resource.name)?;
 
-    let state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("present");
+    let state = resource.prop_str_or("state", "present");
 
     let cron_path = format!("{CRON_DIR}/{}", resource.name);
     let target = Path::new(&cron_path);
@@ -248,11 +244,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         });
     }
 
-    let user = resource
-        .props
-        .get("user")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("cron resource requires 'user'".into()))?;
+    let user = resource.prop_str_required("user")?;
 
     validate_cron_field("user", user)?;
 

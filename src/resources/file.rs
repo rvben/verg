@@ -6,11 +6,7 @@ use crate::error::Error;
 use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let path = resource
-        .props
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("file resource requires 'path'".into()))?;
+    let path = resource.prop_str_required("path")?;
 
     let target = Path::new(path);
     let mut changes = Vec::new();

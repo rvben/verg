@@ -24,21 +24,9 @@ fn rebuild_sysctl_conf(existing: &str, key: &str, desired: &str) -> String {
 }
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let key = resource
-        .props
-        .get("key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("sysctl resource requires 'key'".into()))?;
-    let desired = resource
-        .props
-        .get("value")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("sysctl resource requires 'value'".into()))?;
-    let persist = resource
-        .props
-        .get("persist")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let key = resource.prop_str_required("key")?;
+    let desired = resource.prop_str_required("value")?;
+    let persist = resource.prop_bool_or("persist", false);
 
     // Check current value
     let output = run_cmd("sysctl", &["-n", key])?;

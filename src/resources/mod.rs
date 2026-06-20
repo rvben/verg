@@ -137,6 +137,34 @@ impl ResolvedResource {
     pub fn fqn(&self) -> String {
         format!("{}.{}", self.resource_type, self.name)
     }
+
+    /// An optional string property.
+    pub fn prop_str(&self, key: &str) -> Option<&str> {
+        self.props.get(key).and_then(|v| v.as_str())
+    }
+
+    /// A string property, or `default` when absent or non-string.
+    pub fn prop_str_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
+        self.prop_str(key).unwrap_or(default)
+    }
+
+    /// A required string property; errors if absent or non-string.
+    pub fn prop_str_required(&self, key: &str) -> Result<&str, Error> {
+        self.prop_str(key).ok_or_else(|| {
+            Error::Resource(format!(
+                "{} resource requires '{}'",
+                self.resource_type, key
+            ))
+        })
+    }
+
+    /// A boolean property, or `default` when absent or non-bool.
+    pub fn prop_bool_or(&self, key: &str, default: bool) -> bool {
+        self.props
+            .get(key)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default)
+    }
 }
 
 impl ResourceResult {
@@ -320,6 +348,37 @@ pub fn run_cmd_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prop_accessors_read_typed_values() {
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), toml::Value::String("nginx".into()));
+        props.insert("enabled".to_string(), toml::Value::Boolean(true));
+        let r = ResolvedResource {
+            resource_type: "service".into(),
+            name: "nginx".into(),
+            props,
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+            sensitive: false,
+        };
+        assert_eq!(r.prop_str("name"), Some("nginx"));
+        assert_eq!(r.prop_str("missing"), None);
+        assert_eq!(r.prop_str_or("missing", "present"), "present");
+        assert_eq!(r.prop_str_or("name", "x"), "nginx");
+        assert!(r.prop_bool_or("enabled", false));
+        assert!(!r.prop_bool_or("missing", false));
+        assert_eq!(r.prop_str_required("name").unwrap(), "nginx");
+        let err = r.prop_str_required("missing").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("service resource requires 'missing'"),
+            "got: {err}"
+        );
+    }
 
     #[test]
     fn from_changes_empty_is_ok_no_diff() {

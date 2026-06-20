@@ -8,17 +8,9 @@ fn user_exists(name: &str) -> Result<bool, Error> {
 }
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
-    let name = resource
-        .props
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::Resource("user resource requires 'name'".into()))?;
+    let name = resource.prop_str_required("name")?;
 
-    let state = resource
-        .props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .unwrap_or("present");
+    let state = resource.prop_str_or("state", "present");
 
     let exists = user_exists(name)?;
 
