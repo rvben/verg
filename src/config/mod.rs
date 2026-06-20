@@ -67,9 +67,7 @@ fn specific_fields(resource_type: &str) -> Option<&'static [&'static str]> {
         "service" => &["name", "state", "enabled"],
         "docker_compose" => &["project_dir", "compose_file", "env_file", "state", "pull"],
         "sysctl" => &["key", "value", "persist"],
-        "cmd" => &[
-            "command", "creates", "unless", "onlyif", "stdin", "register",
-        ],
+        "cmd" => &["command", "creates", "unless", "onlyif", "stdin"],
         "user" => &["name", "state", "home", "shell", "groups"],
         "cron" => &[
             "name", "schedule", "command", "user", "jobs", "mailto", "env", "state",
@@ -130,5 +128,12 @@ mod tests {
         assert!(f.contains(&"when")); // common
         assert!(f.contains(&"template")); // build-time
         assert!(allowed_fields("nonsuch").is_none());
+
+        // Type-specific keys must NOT bleed across types.
+        let pkg = allowed_fields("pkg").unwrap();
+        assert!(!pkg.contains(&"source")); // file-only build input
+        assert!(!pkg.contains(&"compose_file")); // docker_compose-only
+        // register is a common field, available everywhere including cmd.
+        assert!(allowed_fields("cmd").unwrap().contains(&"register"));
     }
 }
