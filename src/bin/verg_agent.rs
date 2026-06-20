@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 use std::process::Command as ProcessCommand;
 
 use verg::agent::{
@@ -22,12 +21,15 @@ fn run_notify_command(target: &str) -> Result<std::process::Output, std::io::Err
     match parse_notify_target(target) {
         NotifyTarget::DaemonReload => ProcessCommand::new("systemctl")
             .args(["daemon-reload"])
+            .env("PATH", verg::resources::SECURE_PATH)
             .output(),
         NotifyTarget::Restart(svc) => ProcessCommand::new("systemctl")
             .args(["restart", svc])
+            .env("PATH", verg::resources::SECURE_PATH)
             .output(),
         NotifyTarget::Reload(svc) => ProcessCommand::new("systemctl")
             .args(["reload", svc])
+            .env("PATH", verg::resources::SECURE_PATH)
             .output(),
         NotifyTarget::DockerRestart(path) => ProcessCommand::new("docker")
             .args([
@@ -36,6 +38,7 @@ fn run_notify_command(target: &str) -> Result<std::process::Output, std::io::Err
                 &format!("{path}/docker-compose.yml"),
                 "restart",
             ])
+            .env("PATH", verg::resources::SECURE_PATH)
             .output(),
         NotifyTarget::DockerUp(path) => ProcessCommand::new("docker")
             .args([
@@ -45,6 +48,7 @@ fn run_notify_command(target: &str) -> Result<std::process::Output, std::io::Err
                 "up",
                 "-d",
             ])
+            .env("PATH", verg::resources::SECURE_PATH)
             .output(),
         NotifyTarget::Unknown(_) => Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -154,11 +158,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dry_run = args.iter().any(|a| a == "--dry-run");
 
-    let mut input = String::new();
-    if let Err(e) = std::io::stdin().read_to_string(&mut input) {
-        eprintln!("failed to read stdin: {e}");
-        std::process::exit(7);
-    }
+    let input = match verg::resources::read_bounded(std::io::stdin().lock(), 64 * 1024 * 1024) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("failed to read stdin: {e}");
+            std::process::exit(5);
+        }
+    };
 
     let bundle = match Bundle::from_toml(&input) {
         Ok(b) => b,

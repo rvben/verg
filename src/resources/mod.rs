@@ -14,12 +14,31 @@ pub mod tempdir;
 pub mod user;
 pub mod when;
 
+use std::io::Read;
 use std::process::Command as ProcessCommand;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::error::Error;
+
+/// Minimal secure PATH for root command resolution (independent of the inherited
+/// environment). Includes /usr/local/bin for docker/compose.
+pub const SECURE_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+/// Read up to `max` bytes as UTF-8; error if the source exceeds `max` (so a
+/// runaway bundle cannot OOM the agent).
+pub fn read_bounded<R: std::io::Read>(reader: R, max: usize) -> Result<String, Error> {
+    let mut buf = Vec::new();
+    // Read one extra byte so we can detect an over-limit source.
+    let read = reader.take((max as u64) + 1).read_to_end(&mut buf)?;
+    if read > max {
+        return Err(Error::Config(format!(
+            "input too large: exceeds {max} bytes"
+        )));
+    }
+    String::from_utf8(buf).map_err(|e| Error::Parse(format!("input is not valid UTF-8: {e}")))
+}
 
 /// Sentinel prefix/suffix for register references preserved through template rendering.
 pub const REGISTER_SENTINEL: &str = "__VERG_REG_";
@@ -156,6 +175,7 @@ pub fn execute_resource(
 pub fn run_cmd(cmd: &str, args: &[&str]) -> Result<std::process::Output, Error> {
     ProcessCommand::new(cmd)
         .args(args)
+        .env("PATH", SECURE_PATH)
         .output()
         .map_err(|e| Error::Resource(format!("failed to run {cmd}: {e}")))
 }
@@ -178,6 +198,7 @@ pub fn run_cmd_with_stdin(
 
     let mut child = ProcessCommand::new(cmd)
         .args(args)
+        .env("PATH", SECURE_PATH)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -252,6 +273,23 @@ mod tests {
         assert_eq!(summary.summary.changed, 1);
         assert_eq!(summary.summary.failed, 1);
         assert_eq!(summary.summary.skipped, 0);
+    }
+
+    #[test]
+    fn read_bounded_accepts_within_limit() {
+        let data = b"hello world";
+        let out = read_bounded(&data[..], 1024).unwrap();
+        assert_eq!(out, "hello world");
+    }
+
+    #[test]
+    fn read_bounded_rejects_oversized() {
+        let data = vec![b'x'; 100];
+        let err = read_bounded(&data[..], 16).unwrap_err();
+        assert!(
+            err.to_string().contains("too large") || err.to_string().contains("exceeds"),
+            "got: {err}"
+        );
     }
 
     #[test]
