@@ -186,7 +186,7 @@ mod tests {
             dir.path().join("hosts.toml"),
             r#"
 [hosts.web1]
-address = "192.168.1.10"
+address = "192.0.2.10"
 groups = ["web"]
 
 [hosts.web1.vars]
@@ -234,7 +234,7 @@ custom = "from_group"
             "web1".into(),
             Host {
                 name: "web1".into(),
-                address: "192.168.1.10".into(),
+                address: "192.0.2.10".into(),
                 user: "root".into(),
                 port: None,
                 groups: vec!["web".into(), "prod".into()],
@@ -245,7 +245,7 @@ custom = "from_group"
             "web2".into(),
             Host {
                 name: "web2".into(),
-                address: "192.168.1.11".into(),
+                address: "192.0.2.11".into(),
                 user: "root".into(),
                 port: None,
                 groups: vec!["web".into(), "staging".into()],
@@ -256,7 +256,7 @@ custom = "from_group"
             "db1".into(),
             Host {
                 name: "db1".into(),
-                address: "10.0.0.5".into(),
+                address: "192.0.2.5".into(),
                 user: "root".into(),
                 port: None,
                 groups: vec!["db".into(), "prod".into()],

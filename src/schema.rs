@@ -53,7 +53,7 @@ pub fn run() {
             },
             {
                 "name": "check",
-                "description": "Verify targets match desired state (exit code only)",
+                "description": "Verify targets match desired state",
                 "mutating": false,
                 "args": [
                     {"name": "--targets", "type": "string", "required": false, "default": "all", "description": "Target pattern to match hosts (default: all)"}

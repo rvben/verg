@@ -381,7 +381,7 @@ mod tests {
     fn test_host() -> Host {
         Host {
             name: "web1".into(),
-            address: "192.168.1.10".into(),
+            address: "192.0.2.10".into(),
             user: "root".into(),
             port: None,
             groups: vec!["web".into(), "prod".into()],

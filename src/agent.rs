@@ -138,10 +138,10 @@ mod tests {
     fn interpolate_registers_replaces_matching_sentinel() {
         let resource = make_resource(&[("content", "__VERG_REG_ip__VERG_END__")]);
         let mut registers = HashMap::new();
-        registers.insert("ip".into(), "10.0.0.1".into());
+        registers.insert("ip".into(), "192.0.2.1".into());
 
         let result = interpolate_registers(&resource, &registers);
-        assert_eq!(result.props["content"].as_str().unwrap(), "10.0.0.1");
+        assert_eq!(result.props["content"].as_str().unwrap(), "192.0.2.1");
     }
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn has_unresolved_registers_false_for_clean() {
-        let resource = make_resource(&[("content", "10.0.0.1")]);
+        let resource = make_resource(&[("content", "192.0.2.1")]);
         assert!(!has_unresolved_registers(&resource));
     }
 

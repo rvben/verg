@@ -158,11 +158,11 @@ mod tests {
 
     #[test]
     fn register_cmd_does_not_require_guard() {
-        let mut r = cmd_resource("get-ip", "echo 10.0.0.1", &[]);
+        let mut r = cmd_resource("get-ip", "echo 192.0.2.1", &[]);
         r.register = Some("ip".into());
         let result = execute(&r, false, false).unwrap();
         assert_eq!(result.status, ResourceStatus::Changed);
-        assert_eq!(result.output, Some("10.0.0.1".into()));
+        assert_eq!(result.output, Some("192.0.2.1".into()));
     }
 
     #[test]
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn register_cmd_dry_run() {
-        let mut r = cmd_resource("get-ip", "echo 10.0.0.1", &[]);
+        let mut r = cmd_resource("get-ip", "echo 192.0.2.1", &[]);
         r.register = Some("ip".into());
         let result = execute(&r, true, false).unwrap();
         assert_eq!(result.status, ResourceStatus::Changed);

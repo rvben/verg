@@ -58,7 +58,7 @@ verg apply --targets all
 ```toml
 # verg/hosts.toml
 [hosts.web1]
-address = "192.168.1.10"
+address = "192.0.2.10"
 user = "root"
 groups = ["web"]
 

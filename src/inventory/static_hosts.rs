@@ -74,12 +74,12 @@ mod tests {
             f,
             r#"
 [hosts.web1]
-address = "192.168.1.10"
+address = "192.0.2.10"
 user = "root"
 groups = ["web", "prod"]
 
 [hosts.web2]
-address = "192.168.1.11"
+address = "192.0.2.11"
 groups = ["web"]
 "#
         )
@@ -87,7 +87,7 @@ groups = ["web"]
 
         let hosts = load_hosts(f.path()).unwrap();
         assert_eq!(hosts.len(), 2);
-        assert_eq!(hosts["web1"].address, "192.168.1.10");
+        assert_eq!(hosts["web1"].address, "192.0.2.10");
         assert_eq!(hosts["web1"].user, "root");
         assert_eq!(hosts["web1"].groups, vec!["web", "prod"]);
         assert_eq!(hosts["web2"].user, "root"); // default
@@ -100,7 +100,7 @@ groups = ["web"]
             f,
             r#"
 [hosts.db1]
-address = "10.0.0.5"
+address = "192.0.2.5"
 groups = ["db"]
 
 [hosts.db1.vars]
@@ -121,7 +121,7 @@ data_dir = "/var/lib/postgres"
             f,
             r#"
 [hosts.web1]
-address = "192.168.1.10"
+address = "192.0.2.10"
 port = 2222
 groups = ["web"]
 "#
@@ -139,7 +139,7 @@ groups = ["web"]
             f,
             r#"
 [hosts.web1]
-address = "192.168.1.10"
+address = "192.0.2.10"
 "#
         )
         .unwrap();

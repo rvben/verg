@@ -24,9 +24,11 @@ struct Cli {
     #[arg(long, global = true, hide = true)]
     json: bool,
 
+    /// Suppress per-resource lines; print only the final summary
     #[arg(long, short = 'q', global = true)]
     quiet: bool,
 
+    /// Proceed when stdin is not a TTY (required for CI/pipelines)
     #[arg(long, short = 'y', global = true)]
     yes: bool,
 
@@ -72,6 +74,7 @@ struct Cli {
 enum Command {
     /// Converge targets to desired state
     Apply {
+        /// Hosts/groups to converge (e.g. all, web, prod:!db). Required - no default, to prevent accidental mass applies.
         #[arg(long, short)]
         targets: String,
     },
@@ -90,7 +93,7 @@ enum Command {
         #[arg(long)]
         fields: Option<String>,
     },
-    /// Verify targets match desired state (exit code only)
+    /// Verify targets match desired state
     Check {
         /// Target pattern to match hosts (default: all)
         #[arg(long, short, default_value = "all")]
