@@ -2,14 +2,51 @@ use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enabled_states_are_enabled() {
+        assert!(systemctl_reports_enabled("enabled\n"));
+        assert!(systemctl_reports_enabled("enabled-runtime\n"));
+    }
+
+    #[test]
+    fn non_enabled_states_are_not_enabled() {
+        for s in [
+            "disabled\n",
+            "static\n",
+            "masked\n",
+            "indirect\n",
+            "generated\n",
+            "",
+        ] {
+            assert!(
+                !systemctl_reports_enabled(s),
+                "should not be enabled: {s:?}"
+            );
+        }
+    }
+}
+
 fn is_active(name: &str) -> Result<bool, Error> {
     let output = run_cmd("systemctl", &["is-active", name])?;
     Ok(output.status.success())
 }
 
+/// True only when the unit is genuinely enabled. `systemctl is-enabled` exits
+/// 0 for `static`/`indirect`/`alias`/`generated` too, so exit code alone
+/// misclassifies units that cannot be enabled or disabled.
+fn systemctl_reports_enabled(output: &str) -> bool {
+    matches!(output.trim(), "enabled" | "enabled-runtime")
+}
+
 fn is_enabled(name: &str) -> Result<bool, Error> {
     let output = run_cmd("systemctl", &["is-enabled", name])?;
-    Ok(output.status.success())
+    Ok(systemctl_reports_enabled(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 fn systemctl(action: &str, name: &str) -> Result<(), Error> {
