@@ -99,7 +99,11 @@ enum Command {
     /// Print resource type schemas as JSON
     Schema,
     /// Scaffold a new verg project directory
-    Init,
+    Init {
+        /// Overwrite existing scaffold files
+        #[arg(long)]
+        force: bool,
+    },
     /// Generate shell completions
     Completions {
         #[arg(value_enum)]
@@ -245,8 +249,8 @@ async fn run(
             verg::schema::run();
             Ok(0)
         }
-        Command::Init => {
-            commands::init::run(&base_dir)?;
+        Command::Init { force } => {
+            commands::init::run(&base_dir, force)?;
             Ok(0)
         }
         Command::Completions { shell } => {
