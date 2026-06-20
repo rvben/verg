@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
 /// Manages directories with ownership and permissions.
 ///
@@ -129,11 +129,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 }
                 args.push(arg.as_str());
                 args.push(path);
-                let output = run_cmd("chown", &args)?;
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(Error::Resource(format!("chown failed: {stderr}")));
-                }
+                run_checked("chown", &args, "chown")?;
             }
         }
     }

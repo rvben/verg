@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
 /// Manages an APT repository with GPG key.
 ///
@@ -113,11 +113,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             )
             .map_err(|e| Error::Resource(format!("failed to write {list_path}: {e}")))?;
             // Update package lists
-            let output = run_cmd("apt-get", &["update", "-qq"])?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(Error::Resource(format!("apt-get update failed: {stderr}")));
-            }
+            run_checked("apt-get", &["update", "-qq"], "apt-get update")?;
         }
     }
 

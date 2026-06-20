@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let path = resource
@@ -75,11 +75,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         if current_owner != owner {
             changes.push(format!("owner {current_owner} → {owner}"));
             if !dry_run {
-                let output = run_cmd("chown", &[owner, path])?;
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(Error::Resource(format!("chown failed: {stderr}")));
-                }
+                run_checked("chown", &[owner, path], "chown")?;
             }
         }
     }

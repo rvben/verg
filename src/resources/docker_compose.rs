@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
 /// Manages Docker Compose services.
 ///
@@ -97,17 +97,15 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         } else {
             // Pull images if requested
             if pull {
-                let output = run_cmd("docker", &["compose", "-f", &compose_path, "pull", "-q"])?;
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    return Err(Error::Resource(format!(
-                        "docker compose pull failed: {stderr}"
-                    )));
-                }
+                run_checked(
+                    "docker",
+                    &["compose", "-f", &compose_path, "pull", "-q"],
+                    "docker compose pull",
+                )?;
             }
 
             // Start/restart the stack
-            let output = run_cmd(
+            run_checked(
                 "docker",
                 &[
                     "compose",
@@ -117,13 +115,8 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                     "-d",
                     "--remove-orphans",
                 ],
+                "docker compose up",
             )?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(Error::Resource(format!(
-                    "docker compose up failed: {stderr}"
-                )));
-            }
             changes.push("started".to_string());
         }
     }
@@ -182,13 +175,11 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
         ));
     }
 
-    let output = run_cmd("docker", &["compose", "-f", compose_path, "down"])?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::Resource(format!(
-            "docker compose down failed: {stderr}"
-        )));
-    }
+    run_checked(
+        "docker",
+        &["compose", "-f", compose_path, "down"],
+        "docker compose down",
+    )?;
 
     Ok(ResourceResult::changed(
         "docker_compose",

@@ -249,6 +249,16 @@ pub fn redact_result(mut result: ResourceResult, sensitive: bool) -> ResourceRes
     result
 }
 
+/// Run a command and turn a non-zero exit into `Error::Resource("{ctx} failed: {stderr}")`.
+pub fn run_checked(cmd: &str, args: &[&str], ctx: &str) -> Result<(), Error> {
+    let output = run_cmd(cmd, args)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(Error::Resource(format!("{ctx} failed: {stderr}")));
+    }
+    Ok(())
+}
+
 pub fn run_cmd(cmd: &str, args: &[&str]) -> Result<std::process::Output, Error> {
     ProcessCommand::new(cmd)
         .args(args)
@@ -435,6 +445,19 @@ mod tests {
         assert_eq!(summary.summary.changed, 1);
         assert_eq!(summary.summary.failed, 1);
         assert_eq!(summary.summary.skipped, 0);
+    }
+
+    #[test]
+    fn run_checked_succeeds_for_true() {
+        // `true` exits 0 on every supported platform.
+        assert!(run_checked("true", &[], "noop").is_ok());
+    }
+
+    #[test]
+    fn run_checked_errors_with_ctx_on_failure() {
+        // `false` exits non-zero; the ctx must appear in the message.
+        let err = run_checked("false", &[], "myctx").unwrap_err();
+        assert!(err.to_string().contains("myctx failed"), "got: {err}");
     }
 
     #[test]

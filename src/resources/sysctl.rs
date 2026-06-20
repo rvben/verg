@@ -1,6 +1,6 @@
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
 /// Rebuild the persisted sysctl.d content: keep comments and every line whose
 /// key (left of `=`) differs from `key`, then append `key = desired`.
@@ -55,11 +55,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     if current != desired {
         changes.push(format!("{key}: {current} → {desired}"));
         if !dry_run {
-            let set_output = run_cmd("sysctl", &["-w", &format!("{key}={desired}")])?;
-            if !set_output.status.success() {
-                let stderr = String::from_utf8_lossy(&set_output.stderr);
-                return Err(Error::Resource(format!("sysctl -w failed: {stderr}")));
-            }
+            run_checked("sysctl", &["-w", &format!("{key}={desired}")], "sysctl -w")?;
         }
     }
 

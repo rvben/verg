@@ -2,18 +2,7 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, run_cmd};
-
-/// Run a command and return an error when it exits non-zero (its failure is
-/// not swallowed). `ctx` labels the error.
-fn run_checked(cmd: &str, args: &[&str], ctx: &str) -> Result<(), Error> {
-    let output = run_cmd(cmd, args)?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::Resource(format!("{ctx} failed: {stderr}")));
-    }
-    Ok(())
-}
+use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
 /// Downloads a file from a URL and places it at the destination.
 ///
@@ -181,7 +170,7 @@ fn download_and_extract(
     let tmp_path = tmp_path.to_string_lossy().to_string();
     let extract_dir = extract.path().to_string_lossy().to_string();
 
-    let output = run_cmd(
+    run_checked(
         "curl",
         &[
             "-fSL",
@@ -193,24 +182,17 @@ fn download_and_extract(
             &tmp_path,
             url,
         ],
+        "download",
     )?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::Resource(format!("download failed: {stderr}")));
-    }
 
     // checksum is guaranteed Some for the extract path (enforced in execute).
     verify_checksum(&tmp_path, checksum)?;
 
     if url.ends_with(".zip") {
         // -o overwrite, -d into our private dir. unzip does not restore owner.
-        let output = run_cmd("unzip", &["-o", &tmp_path, "-d", &extract_dir])?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Resource(format!("unzip failed: {stderr}")));
-        }
+        run_checked("unzip", &["-o", &tmp_path, "-d", &extract_dir], "unzip")?;
     } else if url.ends_with(".tar.gz") || url.ends_with(".tgz") {
-        let output = run_cmd(
+        run_checked(
             "tar",
             &[
                 "--no-same-owner",
@@ -221,11 +203,8 @@ fn download_and_extract(
                 "-C",
                 &extract_dir,
             ],
+            "tar extract",
         )?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Resource(format!("tar extract failed: {stderr}")));
-        }
     } else {
         return Err(Error::Resource(format!(
             "unsupported archive format for {url}. Supported: .zip, .tar.gz, .tgz"
@@ -268,11 +247,7 @@ fn download_direct(
     checksum: Option<&str>,
     changes: &mut Vec<String>,
 ) -> Result<(), Error> {
-    let output = run_cmd("curl", &["-fSL", "-o", dest, url])?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::Resource(format!("download failed: {stderr}")));
-    }
+    run_checked("curl", &["-fSL", "-o", dest, url], "download")?;
 
     verify_checksum(dest, checksum)?;
 
