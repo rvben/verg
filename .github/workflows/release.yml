@@ -278,7 +278,15 @@ jobs:
 
           mkdir -p release-package
           cp "${BIN_DIR}/verg" release-package/verg
-          cp "${BIN_DIR}/verg-agent" release-package/verg-agent
+          # Linux: bundle the pre-built musl agent (same file as the standalone
+          # artifact) so the archive and standalone agent are byte-identical and
+          # match the checksum embedded in the verg binary.
+          # macOS: no musl build exists; fall back to the local glibc/native build.
+          if [[ -f "verg-agent-${{ matrix.target }}" ]]; then
+            cp "verg-agent-${{ matrix.target }}" release-package/verg-agent
+          else
+            cp "${BIN_DIR}/verg-agent" release-package/verg-agent
+          fi
           tar -czf "${ARCHIVE_NAME}.tar.gz" -C release-package verg verg-agent
 
           # Standalone agent binary for auto-download (musl for Linux, gnu for macOS)
