@@ -1,13 +1,21 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tokio::sync::OnceCell;
 
 use crate::bundle::Bundle;
 use crate::error::Error;
 use crate::resources::RunSummary;
 
 use super::ExecResult;
+
+/// Process-wide per-arch download gate. Only one tokio task per arch runs the
+/// actual download; all other tasks for the same arch await that single result.
+static DOWNLOADS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<OnceCell<()>>>>> =
+    OnceLock::new();
 
 const AGENT_PATH: &str = "/usr/local/bin/verg-agent";
 
@@ -287,7 +295,7 @@ impl SshTransport {
         }
     }
 
-    fn verify_local_agent(&self, path: &std::path::Path, target: &str) -> Result<(), Error> {
+    async fn verify_local_agent(&self, path: &std::path::Path, target: &str) -> Result<(), Error> {
         if self.skip_agent_checksum {
             return Ok(());
         }
@@ -295,7 +303,13 @@ impl SshTransport {
             // No embedded manifest (dev build): nothing to verify against.
             return Ok(());
         };
-        let actual = sha256_file(path)?;
+        // sha256_file runs a blocking child process; move it off the async
+        // worker thread so it does not stall other tasks while waiting for the
+        // subprocess to exit.
+        let path_owned = path.to_path_buf();
+        let actual = tokio::task::spawn_blocking(move || sha256_file(&path_owned))
+            .await
+            .map_err(|e| Error::Other(format!("sha256_file join error: {e}")))??;
         if actual != expected {
             return Err(Error::Config(format!(
                 "agent binary checksum mismatch for {target}: expected {expected}, got {actual}. \
@@ -310,66 +324,102 @@ impl SshTransport {
         let version_dir = self.agent_dir.join(&self.version);
         let cached = version_dir.join(format!("verg-agent-{target}"));
 
-        // Check versioned cache first
+        // Fast path: cached file already present - no lock needed.
         if cached.exists() {
-            self.verify_local_agent(&cached, target)?;
+            self.verify_local_agent(&cached, target).await?;
             return Ok(cached);
         }
 
-        // Download from GitHub releases
-        eprintln!("Downloading verg-agent v{} for {target}...", self.version);
-        let url = format!(
-            "https://github.com/rvben/verg/releases/download/v{}/verg-agent-{target}",
-            self.version
-        );
+        // Slow path: file absent, need to download. Serialize per-arch so that
+        // N parallel host tasks for the same arch each wait for the single
+        // download that wins the race, rather than all writing to the same path
+        // concurrently.
+        //
+        // Protocol:
+        //   1. Lock the outer mutex briefly to get-or-insert the per-arch cell.
+        //   2. Release the outer mutex.
+        //   3. `get_or_try_init` on the cell: the first caller runs the download;
+        //      all others await it. On error the cell stays uninitialised so a
+        //      retry can succeed (e.g. transient network failure).
+        let cell: Arc<OnceCell<()>> = {
+            let mut map = DOWNLOADS
+                .get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
+                .lock()
+                .await;
+            Arc::clone(
+                map.entry(target.to_string())
+                    .or_insert_with(|| Arc::new(OnceCell::new())),
+            )
+        };
 
-        std::fs::create_dir_all(&version_dir).map_err(|e| {
-            Error::Config(format!(
-                "failed to create agents dir {}: {e}",
-                version_dir.display()
-            ))
-        })?;
+        // Re-check existence inside the cell init so a waiter that lost the
+        // race does not download again after the winner already wrote the file.
+        let cached_ref = cached.clone();
+        let version_dir_ref = version_dir.clone();
+        let version = self.version.clone();
+        let target_str = target.to_string();
+        cell.get_or_try_init(|| async move {
+            // Another task may have completed the download while we were waiting
+            // for the cell.
+            if cached_ref.exists() {
+                return Ok(());
+            }
 
-        let output = Command::new("curl")
-            .args(["-fSL", "--progress-bar", "-m", "300", "-o"])
-            .arg(&cached)
-            .arg(&url)
-            .output()
-            .await
-            .map_err(|e| Error::Connection(format!("curl: {e}")))?;
+            eprintln!("Downloading verg-agent v{version} for {target_str}...");
+            let url = format!(
+                "https://github.com/rvben/verg/releases/download/v{version}/verg-agent-{target_str}"
+            );
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Clean up partial download
-            let _ = std::fs::remove_file(&cached);
-            return Err(Error::Config(format!(
-                "failed to download agent binary from {url}\n{stderr}\n\
-                 Hint: the release v{} may not exist yet. \
-                 Build locally with `cargo build --release --target {target} --bin verg-agent`",
-                self.version
-            )));
-        }
+            std::fs::create_dir_all(&version_dir_ref).map_err(|e| {
+                Error::Config(format!(
+                    "failed to create agents dir {}: {e}",
+                    version_dir_ref.display()
+                ))
+            })?;
 
-        // Make executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| Error::Config(format!("failed to chmod agent binary: {e}")))?;
-        }
+            let output = Command::new("curl")
+                .args(["-fSL", "--progress-bar", "-m", "300", "-o"])
+                .arg(&cached_ref)
+                .arg(&url)
+                .output()
+                .await
+                .map_err(|e| Error::Connection(format!("curl: {e}")))?;
 
-        // Clean up old versions
-        if let Ok(entries) = std::fs::read_dir(&self.agent_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && path != version_dir {
-                    let _ = std::fs::remove_dir_all(&path);
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Clean up partial download
+                let _ = std::fs::remove_file(&cached_ref);
+                return Err(Error::Config(format!(
+                    "failed to download agent binary from {url}\n{stderr}\n\
+                     Hint: the release v{version} may not exist yet. \
+                     Build locally with `cargo build --release --target {target_str} --bin verg-agent`"
+                )));
+            }
+
+            // Make executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&cached_ref, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|e| Error::Config(format!("failed to chmod agent binary: {e}")))?;
+            }
+
+            // Clean up old versions
+            if let Ok(entries) = std::fs::read_dir(version_dir_ref.parent().unwrap_or(&version_dir_ref)) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() && path != version_dir_ref {
+                        let _ = std::fs::remove_dir_all(&path);
+                    }
                 }
             }
-        }
 
-        eprintln!("Cached at {}", cached.display());
-        self.verify_local_agent(&cached, target)?;
+            eprintln!("Cached at {}", cached_ref.display());
+            Ok(())
+        })
+        .await?;
+
+        self.verify_local_agent(&cached, target).await?;
         Ok(cached)
     }
 
