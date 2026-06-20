@@ -714,6 +714,7 @@ mod tests {
         assert_eq!(summary.host, "test-host");
         assert_eq!(summary.resources.len(), 2);
         // Both ran and produced a result (Changed in dry-run for non-existing files)
+        assert_eq!(summary.summary.changed, 2);
         assert_eq!(summary.summary.failed, 0);
         assert_eq!(summary.summary.skipped, 0);
     }
