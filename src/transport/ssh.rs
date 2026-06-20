@@ -33,12 +33,48 @@ impl HostKeyChecking {
     }
 }
 
+/// Compute the lowercase hex SHA-256 of a local file via `sha256sum`.
+fn sha256_file(path: &std::path::Path) -> Result<String, Error> {
+    let output = std::process::Command::new("sha256sum")
+        .arg(path)
+        .output()
+        .map_err(|e| Error::Other(format!("sha256sum: {e}")))?;
+    if !output.status.success() {
+        return Err(Error::Other(format!(
+            "sha256sum failed for {}",
+            path.display()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let hash = stdout.split_whitespace().next().unwrap_or("").to_string();
+    if hash.len() != 64 {
+        return Err(Error::Other(format!(
+            "unexpected sha256sum output for {}",
+            path.display()
+        )));
+    }
+    Ok(hash)
+}
+
+/// Decide whether the agent must be (re)pushed: push if the version is absent,
+/// or if an expected hash is known and the installed remote hash differs.
+fn should_push(has_version: bool, expected: Option<&str>, remote_hash: &str) -> bool {
+    if !has_version {
+        return true;
+    }
+    match expected {
+        Some(h) => remote_hash != h,
+        None => false,
+    }
+}
+
 pub struct SshTransport {
     pub agent_dir: PathBuf,
     pub version: String,
     pub ssh_config: Option<PathBuf>,
     pub host_key_checking: HostKeyChecking,
     pub known_hosts: Option<PathBuf>,
+    pub skip_agent_checksum: bool,
 }
 
 impl SshTransport {
@@ -49,6 +85,7 @@ impl SshTransport {
             ssh_config: None,
             host_key_checking: HostKeyChecking::Yes,
             known_hosts: None,
+            skip_agent_checksum: false,
         }
     }
 
@@ -128,6 +165,24 @@ impl SshTransport {
         }
     }
 
+    fn verify_local_agent(&self, path: &std::path::Path, target: &str) -> Result<(), Error> {
+        if self.skip_agent_checksum {
+            return Ok(());
+        }
+        let Some(expected) = crate::agent_checksums::expected_sha256(target) else {
+            // No embedded manifest (dev build): nothing to verify against.
+            return Ok(());
+        };
+        let actual = sha256_file(path)?;
+        if actual != expected {
+            return Err(Error::Config(format!(
+                "agent binary checksum mismatch for {target}: expected {expected}, got {actual}. \
+                 Refusing to push a tampered or corrupt binary. Use --skip-agent-checksum to override."
+            )));
+        }
+        Ok(())
+    }
+
     async fn agent_binary_for_arch(&self, arch: &str) -> Result<PathBuf, Error> {
         let target = Self::arch_to_target(arch)?;
         let version_dir = self.agent_dir.join(&self.version);
@@ -135,6 +190,7 @@ impl SshTransport {
 
         // Check versioned cache first
         if cached.exists() {
+            self.verify_local_agent(&cached, target)?;
             return Ok(cached);
         }
 
@@ -191,6 +247,7 @@ impl SshTransport {
         }
 
         eprintln!("Cached at {}", cached.display());
+        self.verify_local_agent(&cached, target)?;
         Ok(cached)
     }
 
@@ -218,12 +275,39 @@ impl SshTransport {
         Ok(remote_version == self.version)
     }
 
+    async fn remote_agent_sha256(
+        &self,
+        user: &str,
+        address: &str,
+        port: Option<u16>,
+    ) -> Result<String, Error> {
+        let target = format!("{user}@{address}");
+        let mut args = self.ssh_base_args();
+        if let Some(p) = port {
+            args.extend(["-p".into(), p.to_string()]);
+        }
+        args.extend([
+            "-o".into(),
+            "ConnectTimeout=10".into(),
+            target,
+            format!("sha256sum {AGENT_PATH} 2>/dev/null || true"),
+        ]);
+        let output = Command::new("ssh")
+            .args(&args)
+            .output()
+            .await
+            .map_err(|e| Error::Connection(format!("ssh to {address}: {e}")))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout.split_whitespace().next().unwrap_or("").to_string())
+    }
+
     async fn push_binary(
         &self,
         user: &str,
         address: &str,
         port: Option<u16>,
         agent_binary: &std::path::Path,
+        expected: Option<&str>,
     ) -> Result<(), Error> {
         let target = format!("{user}@{address}");
 
@@ -249,19 +333,19 @@ impl SshTransport {
             )));
         }
 
-        // Copy binary
+        // Copy to a temp path beside the final binary (so mv is an atomic rename).
+        let tmp_remote = format!("{AGENT_PATH}.tmp.{}", std::process::id());
         let mut scp_args = self.ssh_base_args();
         if let Some(p) = port {
             scp_args.extend(["-P".into(), p.to_string()]);
         }
         scp_args.push(agent_binary.to_string_lossy().into_owned());
-        scp_args.push(format!("{target}:{AGENT_PATH}"));
+        scp_args.push(format!("{target}:{tmp_remote}"));
         let output = Command::new("scp")
             .args(&scp_args)
             .output()
             .await
             .map_err(|e| Error::Connection(format!("scp: {e}")))?;
-
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::Connection(format!(
@@ -269,28 +353,34 @@ impl SshTransport {
             )));
         }
 
-        // Set permissions and write version
+        // Verify the pushed temp file against the expected hash (when known),
+        // then atomically install with mode 0700 and write the version file. On
+        // any failure the temp file is removed so a bad copy is never trusted.
+        let verify = match expected {
+            Some(hash) => format!(
+                "printf '%s  %s\\n' '{hash}' '{tmp_remote}' | sha256sum -c - >/dev/null && "
+            ),
+            None => String::new(),
+        };
+        let install_cmd = format!(
+            "{verify}chmod 700 '{tmp_remote}' && mv '{tmp_remote}' {AGENT_PATH} && \
+             printf '%s' '{}' > {VERSION_PATH} || {{ rm -f '{tmp_remote}'; exit 1; }}",
+            self.version
+        );
         let mut args = self.ssh_base_args();
         if let Some(p) = port {
             args.extend(["-p".into(), p.to_string()]);
         }
-        args.extend([
-            target,
-            format!(
-                "chmod +x {AGENT_PATH} && echo '{}' > {VERSION_PATH}",
-                self.version
-            ),
-        ]);
+        args.extend([target, install_cmd]);
         let output = Command::new("ssh")
             .args(&args)
             .output()
             .await
-            .map_err(|e| Error::Connection(format!("ssh chmod: {e}")))?;
-
+            .map_err(|e| Error::Connection(format!("ssh install: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::Connection(format!(
-                "failed to set up agent: {stderr}"
+                "failed to verify/install agent (checksum mismatch or install error): {stderr}"
             )));
         }
 
@@ -312,9 +402,22 @@ impl SshTransport {
             .unwrap_or_else(|| "x86_64".into());
 
         let has_version = self.check_version(user, address, port).await?;
-        if !has_version {
+        let arch_target = Self::arch_to_target(&arch)?;
+        let expected = if self.skip_agent_checksum {
+            None
+        } else {
+            crate::agent_checksums::expected_sha256(arch_target)
+        };
+        let needs_push = if has_version && expected.is_some() {
+            let remote = self.remote_agent_sha256(user, address, port).await?;
+            should_push(true, expected, &remote)
+        } else {
+            should_push(has_version, expected, "")
+        };
+        if needs_push {
             let agent_binary = self.agent_binary_for_arch(&arch).await?;
-            self.push_binary(user, address, port, &agent_binary).await?;
+            self.push_binary(user, address, port, &agent_binary, expected)
+                .await?;
         }
 
         let target = format!("{user}@{address}");
@@ -393,5 +496,26 @@ mod tests {
             joined.contains("UserKnownHostsFile=/etc/verg/known_hosts"),
             "got: {joined}"
         );
+    }
+
+    #[test]
+    fn sha256_file_matches_known_vector() {
+        // SHA-256 of the empty file.
+        let f = tempfile::NamedTempFile::new().unwrap();
+        let hash = sha256_file(f.path()).unwrap();
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn should_push_decision() {
+        assert!(super::should_push(false, None, "")); // no version -> push
+        assert!(super::should_push(false, Some("a"), "a")); // no version -> push regardless
+        assert!(!super::should_push(true, None, "")); // version ok, no checksum -> skip
+        assert!(!super::should_push(true, Some("a"), "a")); // installed matches -> skip
+        assert!(super::should_push(true, Some("a"), "b")); // mismatch -> repush
+        assert!(super::should_push(true, Some("a"), "")); // remote absent -> repush
     }
 }

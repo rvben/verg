@@ -56,6 +56,10 @@ struct Cli {
     #[arg(long, global = true)]
     ssh_known_hosts: Option<PathBuf>,
 
+    /// Skip agent binary checksum verification (for air-gapped or local builds)
+    #[arg(long, global = true)]
+    skip_agent_checksum: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -160,6 +164,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 policy,
                 cli.host_key_checking,
                 cli.ssh_known_hosts.clone(),
+                cli.skip_agent_checksum,
             )?;
             commands::apply::run(&engine, &base_dir, &targets, cli.yes, output).await
         }
@@ -176,6 +181,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 policy,
                 cli.host_key_checking,
                 cli.ssh_known_hosts.clone(),
+                cli.skip_agent_checksum,
             )?;
             commands::diff::run(&engine, &base_dir, &targets, limit, offset, fields, output).await
         }
@@ -187,6 +193,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 policy,
                 cli.host_key_checking,
                 cli.ssh_known_hosts.clone(),
+                cli.skip_agent_checksum,
             )?;
             commands::check::run(&engine, &base_dir, &targets, output).await
         }
@@ -214,6 +221,7 @@ fn build_engine(
     policy: verg::config::ConfigPolicy,
     host_key_checking: HostKeyChecking,
     known_hosts: Option<PathBuf>,
+    skip_agent_checksum: bool,
 ) -> Result<Engine, Error> {
     let agent_dir = match agent_dir {
         Some(dir) => dir,
@@ -239,6 +247,7 @@ fn build_engine(
     transport.ssh_config = ssh_config;
     transport.host_key_checking = host_key_checking;
     transport.known_hosts = known_hosts;
+    transport.skip_agent_checksum = skip_agent_checksum;
 
     Ok(Engine {
         transport,
