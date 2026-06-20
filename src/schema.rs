@@ -12,7 +12,8 @@ pub fn run() {
             {"name": "--path", "type": "path", "description": "Path to verg project directory"},
             {"name": "--parallel", "type": "integer", "default": 10, "description": "Maximum parallel connections"},
             {"name": "--ssh-config", "type": "path", "description": "Path to SSH config file"},
-            {"name": "--yes", "type": "boolean", "description": "Skip confirmation prompts for destructive operations"}
+            {"name": "--yes", "type": "boolean", "description": "Skip confirmation prompts for destructive operations"},
+            {"name": "--lax-config", "type": "boolean", "description": "Downgrade config validation errors (unknown keys/types) to warnings"}
         ],
         "commands": [
             {

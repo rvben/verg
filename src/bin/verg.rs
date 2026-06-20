@@ -43,6 +43,10 @@ struct Cli {
     #[arg(long, env = "VERG_AGENT_DIR", global = true)]
     agent_dir: Option<PathBuf>,
 
+    /// Downgrade unknown-key, unknown-type, and wrong-type config errors to warnings
+    #[arg(long, global = true)]
+    lax_config: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -132,6 +136,11 @@ async fn main() {
 
 async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
     let base_dir = cli.path.clone().unwrap_or_else(|| PathBuf::from("verg"));
+    let policy = if cli.lax_config {
+        verg::config::ConfigPolicy::lax()
+    } else {
+        verg::config::ConfigPolicy::strict()
+    };
 
     match cli.command {
         Command::Apply { targets } => {
@@ -139,6 +148,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 cli.parallel.into(),
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
+                policy,
             )?;
             commands::apply::run(&engine, &base_dir, &targets, cli.yes, output).await
         }
@@ -152,6 +162,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 cli.parallel.into(),
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
+                policy,
             )?;
             commands::diff::run(&engine, &base_dir, &targets, limit, offset, fields, output).await
         }
@@ -160,6 +171,7 @@ async fn run(cli: Cli, output: &OutputConfig) -> Result<i32, Error> {
                 cli.parallel.into(),
                 cli.ssh_config.clone(),
                 cli.agent_dir.clone(),
+                policy,
             )?;
             commands::check::run(&engine, &base_dir, &targets, output).await
         }
@@ -184,6 +196,7 @@ fn build_engine(
     parallel: usize,
     ssh_config: Option<PathBuf>,
     agent_dir: Option<PathBuf>,
+    policy: verg::config::ConfigPolicy,
 ) -> Result<Engine, Error> {
     let agent_dir = match agent_dir {
         Some(dir) => dir,
@@ -211,5 +224,6 @@ fn build_engine(
     Ok(Engine {
         transport,
         parallel,
+        policy,
     })
 }

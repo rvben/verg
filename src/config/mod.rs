@@ -106,6 +106,31 @@ impl ConfigPolicy {
     }
 }
 
+const ALLOWED_TOP_LEVEL_KEYS: &[&str] = &["targets", "resource"];
+
+/// Reject unknown top-level keys in a state file (e.g. a typo'd `targets`,
+/// which would otherwise silently apply the file to every host).
+pub fn validate_state_file_toml(
+    raw: &str,
+    source: &str,
+    policy: ConfigPolicy,
+) -> Result<(), Error> {
+    let table: toml::Table =
+        toml::from_str(raw).map_err(|e| Error::Parse(format!("failed to parse {source}: {e}")))?;
+    for key in table.keys() {
+        if !ALLOWED_TOP_LEVEL_KEYS.contains(&key.as_str()) {
+            report(
+                policy,
+                format!(
+                    "{source}: unknown top-level key '{key}'. Allowed: {}",
+                    ALLOWED_TOP_LEVEL_KEYS.join(", ")
+                ),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// Resource types the agent's `execute_resource` dispatcher handles. Keep in
 /// sync with `src/resources/mod.rs::execute_resource`; `known_types_match_dispatcher`
 /// guards the count.
@@ -280,5 +305,25 @@ mod tests {
         assert!(!pkg.contains(&"compose_file")); // docker_compose-only
         // register is a common field, available everywhere including cmd.
         assert!(allowed_fields("cmd").unwrap().contains(&"register"));
+    }
+
+    #[test]
+    fn typoed_targets_key_is_rejected() {
+        let raw = "targetss = [\"web\"]\n[resource.pkg.nginx]\nname = \"nginx\"\n";
+        let err = validate_state_file_toml(raw, "web.toml", ConfigPolicy::strict()).unwrap_err();
+        assert!(err.to_string().contains("targetss"), "got: {err}");
+        assert!(err.to_string().contains("web.toml"), "got: {err}");
+    }
+
+    #[test]
+    fn valid_top_level_keys_pass() {
+        let raw = "targets = [\"web\"]\n[resource.pkg.nginx]\nname = \"nginx\"\n";
+        assert!(validate_state_file_toml(raw, "web.toml", ConfigPolicy::strict()).is_ok());
+    }
+
+    #[test]
+    fn typoed_targets_warns_in_lax() {
+        let raw = "targetss = [\"web\"]\n";
+        assert!(validate_state_file_toml(raw, "web.toml", ConfigPolicy::lax()).is_ok());
     }
 }

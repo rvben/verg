@@ -13,8 +13,10 @@ use crate::transport::ssh::SshTransport;
 pub struct Engine {
     pub transport: SshTransport,
     pub parallel: usize,
+    pub policy: crate::config::ConfigPolicy,
 }
 
+#[derive(Debug)]
 pub struct EngineResult {
     pub summaries: Vec<RunSummary>,
 }
@@ -54,6 +56,29 @@ impl Engine {
         dry_run: bool,
     ) -> Result<EngineResult, Error> {
         let inventory = Inventory::load(base_dir)?;
+
+        // Validate config on the control host before anything host-specific, so
+        // typos fail locally and loudly even if the selector matches no hosts.
+        let state_dir = base_dir.join("state");
+        let state_files = state::load_state_dir(&state_dir)?;
+        crate::config::validate_state_files(&state_files, self.policy)?;
+        if state_dir.is_dir() {
+            let mut entries: Vec<_> = std::fs::read_dir(&state_dir)
+                .map_err(|e| Error::Config(format!("failed to read {}: {e}", state_dir.display())))?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
+                .map(|e| e.path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                let raw = std::fs::read_to_string(&path).map_err(|e| {
+                    Error::Config(format!("failed to read {}: {e}", path.display()))
+                })?;
+                let source = path.file_name().unwrap().to_string_lossy().to_string();
+                crate::config::validate_state_file_toml(&raw, &source, self.policy)?;
+            }
+        }
+
         let selector = selector::parse_selector(target_selector)?;
         let hosts = inventory.filter(&selector)?;
 
@@ -67,8 +92,6 @@ impl Engine {
             return Ok(EngineResult { summaries: vec![] });
         }
 
-        let state_dir = base_dir.join("state");
-        let state_files = state::load_state_dir(&state_dir)?;
         let inventory_ctx = Arc::new(inventory.to_template_context());
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.parallel));
@@ -159,5 +182,41 @@ impl Engine {
         }
 
         Ok(EngineResult { summaries })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn run_rejects_typoed_state_key_before_ssh() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // RFC 5737 TEST-NET-1 address; never actually contacted because
+        // validation fails first.
+        std::fs::write(
+            dir.path().join("hosts.toml"),
+            "[hosts.web1]\naddress = \"192.0.2.10\"\n",
+        )
+        .unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(
+            state.join("web.toml"),
+            "targetss = [\"web\"]\n[resource.pkg.nginx]\nname = \"nginx\"\n",
+        )
+        .unwrap();
+
+        let engine = Engine {
+            transport: SshTransport::new(std::path::PathBuf::from("/tmp"), "0.0.0".into()),
+            parallel: 1,
+            policy: crate::config::ConfigPolicy::strict(),
+        };
+        let err = engine.run(dir.path(), "all", true).await.unwrap_err();
+        assert_eq!(
+            err.exit_code(),
+            crate::error::exit_codes::INVALID_CONFIG,
+            "typoed top-level key must fail as invalid_config, got: {err}"
+        );
     }
 }
