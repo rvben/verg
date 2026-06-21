@@ -1,0 +1,15 @@
+[resource_def.lineinfile]
+description = "Ensure a line is present in (or absent from) a file"
+check = '''
+if [ "$VERG_PARAM_state" = present ]; then grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"
+else ! grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path" 2>/dev/null; fi
+'''
+apply = '''
+if [ "$VERG_PARAM_state" = present ]; then printf '%s\n' "$VERG_PARAM_line" >> "$VERG_PARAM_path"
+else grep -vxF -- "$VERG_PARAM_line" "$VERG_PARAM_path" > "$VERG_PARAM_path.tmp" && mv "$VERG_PARAM_path.tmp" "$VERG_PARAM_path"; fi
+'''
+
+[resource_def.lineinfile.params]
+path  = { type = "string", required = true }
+line  = { type = "string", required = true }
+state = { type = "string", default = "present", enum = ["present", "absent"] }

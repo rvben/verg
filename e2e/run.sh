@@ -147,6 +147,10 @@ info "  /tmp/verg-test.txt: correct content"
 ssh -F "$SSH_CONFIG" verg-e2e "test -f /tmp/verg-marker" || fail "marker file not created"
 info "  /tmp/verg-marker: exists"
 
+# Check custom lineinfile resource
+ssh -F "$SSH_CONFIG" verg-e2e "grep -qxF 'Managed by verg' /tmp/verg-motd" || fail "lineinfile custom resource not applied"
+info "  /tmp/verg-motd: lineinfile applied"
+
 # --- Test 4: idempotency ---
 
 info "Test 4: idempotency (second apply)..."

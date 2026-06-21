@@ -13,3 +13,8 @@ mode = "0644"
 [resource.cmd.marker]
 command = "echo 'verg was here' > /tmp/verg-marker"
 creates = "/tmp/verg-marker"
+
+# Test: custom lineinfile resource
+[resource.lineinfile.banner]
+path = "/tmp/verg-motd"
+line = "Managed by verg"
