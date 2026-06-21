@@ -207,4 +207,85 @@ mod tests {
             Some("deploy")
         );
     }
+
+    fn dir_resource(path: &std::path::Path, extra: &[(&str, &str)]) -> ResolvedResource {
+        let mut props = std::collections::HashMap::new();
+        props.insert(
+            "path".into(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        );
+        for (k, v) in extra {
+            props.insert((*k).into(), toml::Value::String((*v).into()));
+        }
+        crate::resources::test_resource("directory", "d", props)
+    }
+
+    #[test]
+    fn create_is_idempotent_and_dry_run_does_not_create() {
+        use crate::resources::ResourceStatus;
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("nested/created");
+        let r = dir_resource(&target, &[]);
+
+        // dry-run reports the change but must NOT create the directory.
+        let dry = execute(&r, true).unwrap();
+        assert_eq!(dry.status, ResourceStatus::Changed);
+        assert!(!target.exists(), "dry-run must not create the directory");
+
+        // apply creates it and reports Changed.
+        let first = execute(&r, false).unwrap();
+        assert_eq!(first.status, ResourceStatus::Changed);
+        assert!(target.is_dir(), "apply must create the directory");
+
+        // second apply is a no-op (idempotent).
+        let second = execute(&r, false).unwrap();
+        assert_eq!(
+            second.status,
+            ResourceStatus::Ok,
+            "second apply must report Ok"
+        );
+    }
+
+    #[test]
+    fn mode_is_reconciled_and_idempotent() {
+        use crate::resources::ResourceStatus;
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("d");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let r = dir_resource(&target, &[("mode", "0750")]);
+
+        let first = execute(&r, false).unwrap();
+        assert_eq!(first.status, ResourceStatus::Changed);
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+            0o750,
+            "mode must be reconciled"
+        );
+
+        let second = execute(&r, false).unwrap();
+        assert_eq!(
+            second.status,
+            ResourceStatus::Ok,
+            "mode reconcile must be idempotent"
+        );
+    }
+
+    #[test]
+    fn dry_run_does_not_chmod() {
+        use crate::resources::ResourceStatus;
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("d");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let r = dir_resource(&target, &[("mode", "0750")]);
+
+        let dry = execute(&r, true).unwrap();
+        assert_eq!(dry.status, ResourceStatus::Changed);
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+            0o777,
+            "dry-run must not change the mode"
+        );
+    }
 }

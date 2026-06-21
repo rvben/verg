@@ -62,45 +62,30 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_with_timezone_prop_does_not_error_on_prop_validation() {
-        // The prop is present: validation passes. In dry-run mode, no
-        // timedatectl set-timezone is invoked for the apply step, so this
-        // completes without an apply error regardless of the runtime environment.
-        // (read_current_timezone may return empty if timedatectl is unavailable,
-        // which counts as drift and still completes cleanly in dry_run.)
+    fn dry_run_reports_change_when_timezone_differs_and_does_not_mutate() {
+        // A desired timezone that cannot match the host's current one drives the
+        // drift path through the real executor. dry-run must report Changed (with
+        // the arrow-formatted diff) and never invoke timedatectl set-timezone.
         let mut props = HashMap::new();
         props.insert(
             "timezone".into(),
-            toml::Value::String("Europe/Amsterdam".into()),
+            toml::Value::String("Etc/Verg-Test-Sentinel".into()),
         );
         let resource = make_resource(props);
-        let result = execute(&resource, true);
-        assert!(
-            result.is_ok(),
-            "dry-run with valid prop must not return an error: {:?}",
-            result.unwrap_err()
-        );
-    }
-
-    #[test]
-    fn no_change_when_current_equals_desired() {
-        // Verify the shape of the Ok result when no changes are produced.
-        let changes: Vec<String> = vec![];
-        let r = ResourceResult::from_changes("timezone", "test", &changes);
-        assert_eq!(r.status, crate::resources::ResourceStatus::Ok);
-        assert!(r.diff.is_none());
-    }
-
-    #[test]
-    fn change_entry_format() {
-        // Verify the change description format used in the diff.
-        let changes = vec!["timezone UTC -> Europe/Amsterdam".to_string()];
-        let r = ResourceResult::from_changes("timezone", "test", &changes);
-        assert_eq!(r.status, crate::resources::ResourceStatus::Changed);
+        let result = execute(&resource, true).unwrap();
         assert_eq!(
-            r.diff.as_deref(),
-            Some("timezone UTC -> Europe/Amsterdam"),
-            "diff must reflect the arrow-formatted change"
+            result.status,
+            crate::resources::ResourceStatus::Changed,
+            "a differing timezone must report Changed via the real executor"
+        );
+        assert!(
+            result
+                .diff
+                .as_deref()
+                .unwrap_or("")
+                .contains("-> Etc/Verg-Test-Sentinel"),
+            "diff must show the arrow-formatted timezone change: {:?}",
+            result.diff
         );
     }
 }

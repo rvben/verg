@@ -141,6 +141,50 @@ mod tests {
     }
 
     #[test]
+    fn creates_guard_is_idempotent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sentinel = dir.path().join("done");
+        let sentinel_str = sentinel.to_string_lossy().into_owned();
+        let r = cmd_resource(
+            "make-it",
+            &format!("touch '{sentinel_str}'"),
+            &[("creates", toml::Value::String(sentinel_str.clone()))],
+        );
+
+        // First apply: sentinel absent -> command runs and creates it -> Changed.
+        let first = execute(&r, false, false).unwrap();
+        assert_eq!(first.status, ResourceStatus::Changed);
+        assert!(sentinel.exists(), "command must have created the sentinel");
+
+        // Second apply: sentinel present -> creates guard skips -> Ok (idempotent).
+        let second = execute(&r, false, false).unwrap();
+        assert_eq!(
+            second.status,
+            ResourceStatus::Ok,
+            "creates guard must skip when the path exists"
+        );
+    }
+
+    #[test]
+    fn creates_guard_dry_run_does_not_run_command() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sentinel = dir.path().join("done");
+        let sentinel_str = sentinel.to_string_lossy().into_owned();
+        let r = cmd_resource(
+            "make-it",
+            &format!("touch '{sentinel_str}'"),
+            &[("creates", toml::Value::String(sentinel_str.clone()))],
+        );
+
+        let dry = execute(&r, true, false).unwrap();
+        assert_eq!(dry.status, ResourceStatus::Changed);
+        assert!(
+            !sentinel.exists(),
+            "dry-run must not run the command (no sentinel created)"
+        );
+    }
+
+    #[test]
     fn cmd_with_guard_still_works() {
         let r = cmd_resource(
             "test",

@@ -190,5 +190,14 @@ fn completions_zsh() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("verg"));
+    // Assert it is an actual zsh completion script (clap emits `#compdef verg`
+    // and a `_verg` function), not merely any output containing "verg".
+    assert!(
+        stdout.contains("#compdef verg"),
+        "zsh completions must start with the #compdef directive"
+    );
+    assert!(
+        stdout.contains("_verg"),
+        "zsh completions must define the _verg completion function"
+    );
 }
