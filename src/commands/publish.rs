@@ -22,9 +22,12 @@ pub fn run(
     targets: &str,
     dest: &Path,
     policy: crate::config::ConfigPolicy,
+    age_identity: Option<&std::path::Path>,
 ) -> Result<i32, Error> {
     let inventory = Inventory::load(base_dir)?;
-    let inventory_ctx = inventory.to_template_context();
+    let mut inventory_ctx = inventory.to_template_context();
+    let secrets = crate::secrets::load_secrets(base_dir, age_identity)?;
+    crate::secrets::inject_secret_namespace(&mut inventory_ctx, secrets);
     let state_files = state::load_state_dir(&base_dir.join("state"))?;
     let resource_defs = crate::resource_def::load_resource_defs(
         &base_dir.join("resources"),
@@ -156,7 +159,14 @@ content = "hello"
         let dest = TempDir::new().unwrap();
         setup_project(&project);
 
-        let code = run(project.path(), "all", dest.path(), ConfigPolicy::strict()).unwrap();
+        let code = run(
+            project.path(),
+            "all",
+            dest.path(),
+            ConfigPolicy::strict(),
+            None,
+        )
+        .unwrap();
 
         // Both hosts publish successfully.
         assert_eq!(code, crate::error::exit_codes::SUCCESS);
@@ -182,7 +192,14 @@ content = "hello"
         let dest = TempDir::new().unwrap();
         setup_project(&project);
 
-        let code = run(project.path(), "web", dest.path(), ConfigPolicy::strict()).unwrap();
+        let code = run(
+            project.path(),
+            "web",
+            dest.path(),
+            ConfigPolicy::strict(),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(code, crate::error::exit_codes::SUCCESS);
         assert!(dest.path().join("web1.toml").exists(), "web1.toml missing");
@@ -198,7 +215,14 @@ content = "hello"
         let dest = TempDir::new().unwrap();
         setup_project(&project);
 
-        run(project.path(), "web", dest.path(), ConfigPolicy::strict()).unwrap();
+        run(
+            project.path(),
+            "web",
+            dest.path(),
+            ConfigPolicy::strict(),
+            None,
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(dest.path().join("web1.toml")).unwrap();
         let bundle = Bundle::from_toml(&content).unwrap();
@@ -267,7 +291,14 @@ content = "hello"
         // Note: the test uses lax config because the "arch" file resource is
         // valid TOML (no config errors), it just fails at bundle-build time when
         // fact.arch is undefined during template rendering.
-        let code = run(project.path(), "all", dest.path(), ConfigPolicy::lax()).unwrap();
+        let code = run(
+            project.path(),
+            "all",
+            dest.path(),
+            ConfigPolicy::lax(),
+            None,
+        )
+        .unwrap();
 
         // Partial failure: db1 publishes but web1 fails.
         // Both hosts fail because both have the fact.arch resource; only db1
@@ -332,7 +363,14 @@ content = "hello from db"
         )
         .unwrap();
 
-        let code = run(project.path(), "all", dest.path(), ConfigPolicy::strict()).unwrap();
+        let code = run(
+            project.path(),
+            "all",
+            dest.path(),
+            ConfigPolicy::strict(),
+            None,
+        )
+        .unwrap();
 
         // web1 fails (fact.arch missing), db1 succeeds -> PARTIAL_FAILURE.
         assert_eq!(code, crate::error::exit_codes::PARTIAL_FAILURE);
@@ -391,7 +429,14 @@ required = true
         )
         .unwrap();
 
-        let code = run(project.path(), "web", dest.path(), ConfigPolicy::strict()).unwrap();
+        let code = run(
+            project.path(),
+            "web",
+            dest.path(),
+            ConfigPolicy::strict(),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(code, crate::error::exit_codes::SUCCESS);
 
@@ -427,7 +472,13 @@ required = true
         )
         .unwrap();
 
-        let result = run(project.path(), "all", dest.path(), ConfigPolicy::strict());
+        let result = run(
+            project.path(),
+            "all",
+            dest.path(),
+            ConfigPolicy::strict(),
+            None,
+        );
 
         // Should return an Err (not Ok with a non-zero code) because the project
         // itself is invalid and we bail before touching any host.
@@ -435,6 +486,122 @@ required = true
         assert!(
             !dest.path().join("web1.toml").exists(),
             "no bundle should be written when project-level validation fails"
+        );
+    }
+
+    /// End-to-end: secrets.age is decrypted, injected under `secret.*` in the
+    /// template context, and rendered into the published bundle content.
+    ///
+    /// Requires `age` and `age-keygen` on PATH. Skipped silently when absent.
+    #[test]
+    fn publish_renders_secret_namespace_from_age_file() {
+        use std::process::Command;
+
+        if Command::new("age-keygen")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        if Command::new("age").arg("--version").output().is_err() {
+            return;
+        }
+
+        let project = TempDir::new().unwrap();
+        let dest = TempDir::new().unwrap();
+
+        // Minimal single-host inventory.
+        std::fs::write(
+            project.path().join("hosts.toml"),
+            "[hosts.web1]\naddress = \"192.0.2.10\"\n",
+        )
+        .unwrap();
+
+        // State file using a secret template variable with sensitive = true.
+        let state_dir = project.path().join("state");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::write(
+            state_dir.join("zz.toml"),
+            "[resource.file.token]\npath = \"/etc/token\"\ncontent = \"{{ secret.app_token }}\"\nsensitive = true\n",
+        )
+        .unwrap();
+
+        // Generate an age identity.
+        let key_path = project.path().join("key.txt");
+        let keygen = Command::new("age-keygen")
+            .arg("-o")
+            .arg(&key_path)
+            .output()
+            .expect("age-keygen");
+        assert!(keygen.status.success(), "age-keygen failed");
+
+        // Derive the recipient public key.
+        let recipient_out = Command::new("age-keygen")
+            .arg("-y")
+            .arg(&key_path)
+            .output()
+            .expect("age-keygen -y");
+        assert!(recipient_out.status.success(), "age-keygen -y failed");
+        let recipient = String::from_utf8(recipient_out.stdout)
+            .expect("recipient utf8")
+            .trim()
+            .to_string();
+
+        // Write secrets as TOML and encrypt them to the recipient.
+        let toml_path = project.path().join("secrets.toml");
+        std::fs::write(&toml_path, "app_token = \"s3cr3t\"\n").unwrap();
+
+        let encrypted_path = project.path().join("secrets.age");
+        let encrypt = Command::new("age")
+            .arg("--encrypt")
+            .arg("-r")
+            .arg(&recipient)
+            .arg("-o")
+            .arg(&encrypted_path)
+            .arg(&toml_path)
+            .output()
+            .expect("age encrypt");
+        assert!(
+            encrypt.status.success(),
+            "age encrypt failed: {}",
+            String::from_utf8_lossy(&encrypt.stderr)
+        );
+
+        // Publish with the age identity provided.
+        let code = run(
+            project.path(),
+            "all",
+            dest.path(),
+            ConfigPolicy::strict(),
+            Some(&key_path),
+        )
+        .unwrap();
+
+        assert_eq!(
+            code,
+            crate::error::exit_codes::SUCCESS,
+            "publish must succeed"
+        );
+
+        let content = std::fs::read_to_string(dest.path().join("web1.toml")).unwrap();
+        let bundle = Bundle::from_toml(&content).unwrap();
+
+        // Find the file resource and check that its rendered content contains the
+        // decrypted secret value, proving end-to-end decrypt + inject + render.
+        let token_resource = bundle
+            .resources
+            .iter()
+            .find(|r| r.name == "token")
+            .expect("token resource must be present in bundle");
+        let rendered_content = token_resource
+            .props
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("content prop must be a string");
+        assert_eq!(
+            rendered_content, "s3cr3t",
+            "rendered content must equal the decrypted secret value"
         );
     }
 }

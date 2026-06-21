@@ -17,6 +17,7 @@ pub struct Engine<T: Transport = SshTransport> {
     pub parallel: usize,
     pub policy: crate::config::ConfigPolicy,
     pub timeout_secs: u64,
+    pub age_identity: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug)]
@@ -137,7 +138,10 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
             return Ok(EngineResult { summaries: vec![] });
         }
 
-        let inventory_ctx = Arc::new(inventory.to_template_context());
+        let secrets = crate::secrets::load_secrets(base_dir, self.age_identity.as_deref())?;
+        let mut ctx = inventory.to_template_context();
+        crate::secrets::inject_secret_namespace(&mut ctx, secrets);
+        let inventory_ctx = Arc::new(ctx);
         let state_files = Arc::new(state_files);
         let resource_defs = Arc::new(resource_defs);
 
@@ -377,6 +381,7 @@ mod tests {
             parallel: 1,
             policy: crate::config::ConfigPolicy::strict(),
             timeout_secs: 600,
+            age_identity: None,
         };
         let cancel = Arc::new(AtomicBool::new(true)); // already cancelled
         let result = engine
@@ -414,6 +419,7 @@ mod tests {
             parallel: 1,
             policy: crate::config::ConfigPolicy::strict(),
             timeout_secs: 600,
+            age_identity: None,
         };
         let err = engine.run(dir.path(), "all", true).await.unwrap_err();
         assert_eq!(
@@ -443,6 +449,7 @@ mod tests {
             parallel: 1,
             policy: crate::config::ConfigPolicy::strict(),
             timeout_secs: 1,
+            age_identity: None,
         };
         let start = std::time::Instant::now();
         let result = engine.run(dir.path(), "all", true).await.unwrap();
@@ -617,6 +624,7 @@ mod tests {
             parallel: 8,
             policy: crate::config::ConfigPolicy::strict(),
             timeout_secs: 30,
+            age_identity: None,
         }
     }
 

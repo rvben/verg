@@ -1,5 +1,19 @@
 use crate::error::Error;
 
+/// Injects a `secret` key into a JSON template context.
+///
+/// When `secrets` is a non-empty object, the entire object is inserted under
+/// the `"secret"` key so templates can reference `{{ secret.foo }}`. An empty
+/// secrets object leaves the context unchanged, keeping behavior identical to a
+/// project with no secrets file.
+pub fn inject_secret_namespace(ctx: &mut serde_json::Value, secrets: serde_json::Value) {
+    if let (serde_json::Value::Object(map), serde_json::Value::Object(s)) = (&mut *ctx, &secrets)
+        && !s.is_empty()
+    {
+        map.insert("secret".to_string(), secrets);
+    }
+}
+
 /// Loads and decrypts secrets from `base_dir/secrets.age`.
 ///
 /// Returns an empty JSON object when the file does not exist (secrets are optional).
@@ -56,6 +70,39 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+
+    #[test]
+    fn inject_adds_secret_key_for_non_empty_secrets() {
+        let mut ctx = serde_json::json!({"host": "web1"});
+        let secrets = serde_json::json!({"app_token": "s3cr3t", "port": 5432});
+        inject_secret_namespace(&mut ctx, secrets);
+        assert_eq!(
+            ctx["secret"]["app_token"].as_str(),
+            Some("s3cr3t"),
+            "secret.app_token must be injected"
+        );
+        assert_eq!(
+            ctx["secret"]["port"].as_i64(),
+            Some(5432),
+            "secret.port must be injected"
+        );
+        assert_eq!(
+            ctx["host"].as_str(),
+            Some("web1"),
+            "existing keys must be preserved"
+        );
+    }
+
+    #[test]
+    fn inject_does_not_add_secret_key_for_empty_secrets() {
+        let mut ctx = serde_json::json!({"host": "web1"});
+        let secrets = serde_json::json!({});
+        inject_secret_namespace(&mut ctx, secrets);
+        assert!(
+            ctx.get("secret").is_none(),
+            "empty secrets must not add a 'secret' key"
+        );
+    }
 
     #[test]
     fn no_secrets_file_returns_empty_object() {

@@ -62,6 +62,10 @@ struct Cli {
     #[arg(long, global = true)]
     skip_agent_checksum: bool,
 
+    /// Path to an age identity file for decrypting verg/secrets.age
+    #[arg(long, env = "VERG_AGE_IDENTITY", global = true)]
+    age_identity: Option<PathBuf>,
+
     /// Per-host timeout in seconds (a hung host fails instead of blocking the run)
     #[arg(long, default_value = "600", global = true)]
     timeout: u64,
@@ -202,6 +206,7 @@ struct EngineConfig {
     known_hosts: Option<PathBuf>,
     skip_agent_checksum: bool,
     timeout_secs: u64,
+    age_identity: Option<PathBuf>,
 }
 
 async fn run(
@@ -225,6 +230,7 @@ async fn run(
         known_hosts: cli.ssh_known_hosts.clone(),
         skip_agent_checksum: cli.skip_agent_checksum,
         timeout_secs: cli.timeout,
+        age_identity: cli.age_identity.clone(),
     };
 
     match cli.command {
@@ -275,9 +281,13 @@ async fn run(
             clap_complete::generate(shell, &mut cmd, "verg", &mut std::io::stdout());
             Ok(0)
         }
-        Command::Publish { targets, dest } => {
-            commands::publish::run(&base_dir, &targets, &dest, policy)
-        }
+        Command::Publish { targets, dest } => commands::publish::run(
+            &base_dir,
+            &targets,
+            &dest,
+            policy,
+            cli.age_identity.as_deref(),
+        ),
     }
 }
 
@@ -313,5 +323,6 @@ fn build_engine(cfg: EngineConfig) -> Result<Engine, Error> {
         parallel: cfg.parallel,
         policy: cfg.policy,
         timeout_secs: cfg.timeout_secs,
+        age_identity: cfg.age_identity,
     })
 }
