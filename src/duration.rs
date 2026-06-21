@@ -23,8 +23,10 @@ pub fn parse_duration(s: &str) -> Result<std::time::Duration, Error> {
         return Ok(std::time::Duration::from_secs(secs));
     }
 
-    // Split the last character as the unit suffix.
-    let (num_part, unit) = s.split_at(s.len() - 1);
+    // Split the last CHARACTER as the unit suffix. Split on a char boundary
+    // (not s.len() - 1) so a multi-byte trailing char does not panic split_at.
+    let last = s.chars().next_back().expect("non-empty checked above");
+    let (num_part, unit) = s.split_at(s.len() - last.len_utf8());
 
     if num_part.is_empty() {
         return Err(Error::Config(format!(
@@ -131,6 +133,14 @@ mod tests {
     #[test]
     fn reject_unknown_unit() {
         assert!(matches!(parse_duration("5x"), Err(Error::Config(_))));
+    }
+
+    #[test]
+    fn reject_multibyte_unit_without_panic() {
+        // A multi-byte trailing char must NOT panic split_at; it is an unknown
+        // unit and must return an error.
+        assert!(matches!(parse_duration("5ñ"), Err(Error::Config(_))));
+        assert!(matches!(parse_duration("3€"), Err(Error::Config(_))));
     }
 
     #[test]
