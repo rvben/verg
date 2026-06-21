@@ -103,8 +103,19 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             } else {
                 // The path is already a git repo.
                 if dry_run {
+                    // Compare LOCALLY (no fetch, so dry-run stays side-effect-free
+                    // and network-free): if the checkout is already at the desired
+                    // ref as known locally (origin/<ref> from the last clone/fetch),
+                    // report no change. This avoids flagging a converged checkout as
+                    // drift on every diff/check. Remote drift since the last fetch is
+                    // not detected here (apply fetches and reconciles).
                     let ref_display = gitref.unwrap_or("HEAD");
-                    changes.push(format!("would update {path} to {ref_display}"));
+                    let desired = resolve_desired_sha(path, gitref).ok();
+                    let current = resolve_sha(path, "HEAD").ok();
+                    let converged = matches!((&desired, &current), (Some(d), Some(c)) if d == c);
+                    if !converged {
+                        changes.push(format!("would update {path} to {ref_display}"));
+                    }
                 } else {
                     // Fetch the latest from origin (including tags).
                     run_checked(
