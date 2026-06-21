@@ -291,6 +291,21 @@ mod tests {
     }
 
     #[test]
+    fn check_killed_by_signal_is_failed() {
+        // A check terminated by a signal yields status.code() == None; it must
+        // surface as Failed (never silently treated as converged).
+        let resource = make_resource("mytype", "signalcheck", HashMap::new());
+        let def = make_def("kill -TERM $$", "true");
+        let result = execute(&resource, &def, false).unwrap();
+        assert_eq!(result.status, ResourceStatus::Failed);
+        let err = result.error.unwrap();
+        assert!(
+            err.contains("terminated by signal"),
+            "error must mention signal termination, got: {err}"
+        );
+    }
+
+    #[test]
     fn apply_failure_is_failed() {
         let resource = make_resource("mytype", "badapply", HashMap::new());
         // check exits 1 (drift), apply exits 1 (failure)
