@@ -62,41 +62,29 @@ fn is_env_safe_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-fn validate_resource_def(
+/// Validate a type's param specifications (names, types, defaults, enum
+/// defaults). Shared by declarative resource_defs and native providers.
+pub fn validate_param_specs(
     type_name: &str,
-    def: &ResourceDef,
-    builtin_types: &[&str],
-    seen_types: &HashMap<String, String>,
+    params: &HashMap<String, ParamSpec>,
     file_path: &str,
 ) -> Result<(), Error> {
-    if builtin_types.contains(&type_name) {
-        return Err(Error::Config(format!(
-            "resource_def type '{type_name}' in {file_path} conflicts with built-in resource type"
-        )));
-    }
-
-    if let Some(prev_file) = seen_types.get(type_name) {
-        return Err(Error::Config(format!(
-            "duplicate resource_def type '{type_name}': first defined in {prev_file}, also in {file_path}"
-        )));
-    }
-
-    for (param_name, param_spec) in &def.params {
+    for (param_name, param_spec) in params {
         if !is_env_safe_name(param_name) {
             return Err(Error::Config(format!(
-                "resource_def '{type_name}' in {file_path}: param name '{param_name}' is not a valid identifier (must match [a-zA-Z_][a-zA-Z0-9_]*)"
+                "'{type_name}' in {file_path}: param name '{param_name}' is not a valid identifier (must match [a-zA-Z_][a-zA-Z0-9_]*)"
             )));
         }
 
         if RESERVED_PARAM_NAMES.contains(&param_name.as_str()) {
             return Err(Error::Config(format!(
-                "resource_def '{type_name}' in {file_path}: param name '{param_name}' is reserved"
+                "'{type_name}' in {file_path}: param name '{param_name}' is reserved"
             )));
         }
 
         if !ALLOWED_PARAM_TYPES.contains(&param_spec.param_type.as_str()) {
             return Err(Error::Config(format!(
-                "resource_def '{type_name}' in {file_path}: param '{param_name}' has unknown type '{}'; allowed types are: string, integer, float, boolean",
+                "'{type_name}' in {file_path}: param '{param_name}' has unknown type '{}'; allowed types are: string, integer, float, boolean",
                 param_spec.param_type
             )));
         }
@@ -116,12 +104,35 @@ fn validate_resource_def(
                 && !enum_values.contains(s)
             {
                 return Err(Error::Config(format!(
-                    "resource_def '{type_name}' in {file_path}: param '{param_name}' default '{s}' is not in enum values: {}",
+                    "'{type_name}' in {file_path}: param '{param_name}' default '{s}' is not in enum values: {}",
                     enum_values.join(", ")
                 )));
             }
         }
     }
+    Ok(())
+}
+
+fn validate_resource_def(
+    type_name: &str,
+    def: &ResourceDef,
+    builtin_types: &[&str],
+    seen_types: &HashMap<String, String>,
+    file_path: &str,
+) -> Result<(), Error> {
+    if builtin_types.contains(&type_name) {
+        return Err(Error::Config(format!(
+            "resource_def type '{type_name}' in {file_path} conflicts with built-in resource type"
+        )));
+    }
+
+    if let Some(prev_file) = seen_types.get(type_name) {
+        return Err(Error::Config(format!(
+            "duplicate resource_def type '{type_name}': first defined in {prev_file}, also in {file_path}"
+        )));
+    }
+
+    validate_param_specs(type_name, &def.params, file_path)?;
 
     Ok(())
 }
@@ -154,7 +165,7 @@ fn validate_default_value(
             toml::Value::Datetime(_) => "datetime",
         };
         return Err(Error::Config(format!(
-            "resource_def '{type_name}' in {file_path}: param '{param_name}' has type '{param_type}' but default is {actual_kind}"
+            "'{type_name}' in {file_path}: param '{param_name}' has type '{param_type}' but default is {actual_kind}"
         )));
     }
 
