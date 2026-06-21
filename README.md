@@ -18,6 +18,7 @@ Desired-state infrastructure convergence engine. A fast, stateless alternative t
 - **Agent-friendly** - `--json` output, `verg schema` for machine-readable resource schemas, and structured exit codes make verg easy to drive from scripts and AI agents.
 - **Secure by default** - agent binary is checksum-verified before and after transfer; strict SSH host key checking; config validated locally before touching any target.
 - **Continuous enforcement** - agents pull and re-converge on a schedule with no central server. See [docs/continuous-enforcement.md](docs/continuous-enforcement.md).
+- **Encrypted secrets** - secrets are encrypted at rest with [age](https://age-encryption.org/), decrypted on the control host at build time, and injected under the `secret.*` template namespace. See [docs/secrets.md](docs/secrets.md).
 - **Extensible** - define your own resource types as TOML data in `verg/resources/`; no recompile required.
 
 ## Install

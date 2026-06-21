@@ -124,6 +124,8 @@ template = true
 
 When `true`, `from`, `to`, and `output` fields are omitted entirely from JSON (not emitted as null), and `diff` is set to `"[redacted]"`. Status and error fields are preserved.
 
+Always set `sensitive = true` on any resource whose properties contain a secret value. For managing encrypted secrets with age, see [docs/secrets.md](secrets.md).
+
 ```toml
 [resource.cmd.set-password]
 command = "chpasswd"
