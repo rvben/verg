@@ -149,6 +149,13 @@ impl Inventory {
                 // Excluding a set that matches no hosts excludes nothing (set
                 // difference A \ {} = A). A `prod:!down` selector must not fail
                 // just because the `down` group is currently empty.
+                //
+                // INTENTIONAL TRADEOFF: a misspelled exclusion (`!dwon`) is
+                // therefore NOT an error - it excludes nothing, just like a
+                // genuinely empty group, because the two are indistinguishable
+                // here. Availability (don't break a run because a group emptied)
+                // is favored over typo-catching for exclusions. Do not "fix" this
+                // back to propagating the error.
                 let excluded = match self.filter(inner) {
                     Ok(hosts) => hosts,
                     Err(Error::TargetNotFound(_)) => Vec::new(),
