@@ -405,9 +405,10 @@ mod tests {
         );
         let defs = lineinfile_defs();
         let err = validate_state_files(&[f], ConfigPolicy::strict(), &defs).unwrap_err();
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("gone") || err.to_string().contains("state"),
-            "error should mention bad enum value, got: {err}"
+            msg.contains("gone") && msg.contains("state"),
+            "error should name the bad enum value and the param, got: {msg}"
         );
     }
 
