@@ -1,6 +1,6 @@
 # Resource Reference
 
-A **resource** is a desired-state declaration for a single manageable item on a target host. Resources are declared as TOML tables with the shape `[resource.<type>.<name>]`, where `<type>` is one of the 11 types listed below and `<name>` is a free-form identifier (letters, numbers, hyphens, underscores). The fully qualified name (FQN) `type.name` is the stable identifier used in `after` dependency lists and `notify` handler references.
+A **resource** is a desired-state declaration for a single manageable item on a target host. Resources are declared as TOML tables with the shape `[resource.<type>.<name>]`, where `<type>` is one of the 15 types listed below and `<name>` is a free-form identifier (letters, numbers, hyphens, underscores). The fully qualified name (FQN) `type.name` is the stable identifier used in `after` dependency lists and `notify` handler references.
 
 ---
 
@@ -413,7 +413,9 @@ Create or remove a system user.
 **Behavior notes:**
 - Users are always created as system users (`useradd --system`).
 - `state = "absent"` runs `userdel -r`, removing the user's home directory and mail spool.
-- This resource only manages user existence. If the user already exists, no attributes (home, shell, groups) are updated. To change attributes of an existing user, remove and re-create it or use a `cmd` resource.
+- When the user already exists, only the attributes you set in the resource are enforced. Omitting `shell`, `home`, or `groups` leaves those attributes untouched on existing users. Attributes that already match the desired value are not modified.
+- `groups` declares the complete supplementary group set. The primary group is not part of this comparison; setting `groups = "docker"` on a user whose primary group is `deploy` will not attempt to remove `deploy` from the user.
+- Home directory changes (`home`) are applied with `usermod -d -m`, which moves the directory's contents. Shell and group changes are applied in the same `usermod` call when multiple attributes drift at once.
 
 ```toml
 [resource.user.deploy]
@@ -601,4 +603,115 @@ dest = "/usr/local/bin/mytool"
 extract = true
 mode = "0755"
 checksum = "a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4"
+```
+
+---
+
+## hostname
+
+Set the static system hostname.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `hostname` | string | yes | - | Desired static hostname |
+
+**Behavior notes:**
+- The current hostname is read from `/etc/hostname`. Any read failure (missing file, permission error) is treated as empty, which causes the resource to drift and converge on next apply.
+- Apply uses `hostnamectl set-hostname <hostname>` and requires systemd on the target.
+
+```toml
+[resource.hostname.web1]
+hostname = "web1"
+```
+
+---
+
+## timezone
+
+Set the system timezone using an IANA timezone database name.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `timezone` | string | yes | - | IANA timezone name (e.g. `"Europe/Amsterdam"`) |
+
+**Behavior notes:**
+- The current timezone is read via `timedatectl show -p Timezone --value`. Any command failure is treated as empty, which causes the resource to drift and converge on next apply.
+- Apply uses `timedatectl set-timezone <timezone>` and requires systemd on the target.
+
+```toml
+[resource.timezone.system]
+timezone = "Europe/Amsterdam"
+```
+
+---
+
+## mount
+
+Manage an `/etc/fstab` entry and the corresponding mount state.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `device` | string | yes | - | Block device or remote share (e.g. `/dev/sdb1`, `UUID=...`, `server:/export`) |
+| `path` | string | yes | - | Absolute mountpoint path |
+| `fstype` | string | yes | - | Filesystem type (e.g. `ext4`, `xfs`, `nfs`, `tmpfs`) |
+| `options` | string | no | `"defaults"` | Mount options |
+| `dump` | string | no | `"0"` | fstab dump field |
+| `pass` | string | no | `"0"` | fstab pass field (fsck order) |
+| `state` | string | no | `"mounted"` | `"mounted"` to add the fstab entry and mount, `"absent"` to unmount and remove the entry |
+
+**Behavior notes:**
+- `/etc/fstab` is matched by mountpoint (field index 1) using an exact string comparison, not a prefix or substring match.
+- On `state = "mounted"`: the fstab entry is written (or updated) atomically before mounting. If the mountpoint is already mounted, the mount step is skipped.
+- On `state = "absent"`: the mountpoint is unmounted first (if mounted), then the fstab entry is removed. Both steps are skipped if already in the desired state.
+- `/etc/fstab` writes are atomic (write to a temp file, then rename). Any read error other than file-not-found aborts the run to protect the existing fstab.
+- Mountpoints containing whitespace are not supported in v1 and are rejected with an error.
+
+```toml
+[resource.mount.data]
+device = "/dev/sdb1"
+path = "/data"
+fstype = "ext4"
+options = "defaults"
+dump = "0"
+pass = "2"
+state = "mounted"
+```
+
+---
+
+## git
+
+Clone a git repository and ensure it is checked out at the desired ref.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `url` | string | yes | - | Repository URL to clone |
+| `path` | string | yes | - | Local checkout directory on the target |
+| `ref` | string | no | repository default branch | Branch, tag, or commit SHA to check out |
+| `depth` | string | no | - | Shallow clone depth passed to `--depth` (integer as string) |
+| `state` | string | no | `"present"` | `"present"` to ensure the checkout exists, `"absent"` to remove it |
+
+**Behavior notes:**
+- When `state = "absent"`, the directory at `path` is removed recursively if it exists.
+- When the directory does not exist, the repository is cloned. Branch and tag refs use `git clone --branch <ref>`; SHA refs use a plain clone followed by `git checkout <sha>`.
+- When the directory exists and is already a git repository, apply fetches from origin (including tags) and resets to the desired ref. Diff/check compares the local checkout to the desired ref using locally cached remote-tracking refs (no network fetch), so remote drift since the last fetch is only detected on the next apply.
+- If `path` exists but is not a git repository (and is non-empty), the resource fails rather than overwriting the directory.
+- SHA refs of 7 to 40 hex digits are detected by a heuristic: any all-hex string in that length range is treated as a SHA, so `git clone --branch` is omitted. Convergence is unaffected because the post-clone checkout resolves the ref directly.
+
+```toml
+[resource.git.app]
+url = "https://github.com/example/app.git"
+path = "/opt/app"
+ref = "main"
+state = "present"
+```
+
+Shallow clone at a specific tag:
+
+```toml
+[resource.git.tool]
+url = "https://github.com/example/tool.git"
+path = "/opt/tool"
+ref = "v2.1.0"
+depth = "1"
 ```

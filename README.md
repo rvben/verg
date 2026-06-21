@@ -154,12 +154,16 @@ See [docs/resources.md](docs/resources.md) for the full common attributes refere
 | [`directory`](docs/resources.md#directory) | Ensure a directory exists with the right permissions and ownership |
 | [`service`](docs/resources.md#service) | Manage a systemd service's running state and boot enablement |
 | [`cmd`](docs/resources.md#cmd) | Run a shell command with an idempotency guard |
-| [`user`](docs/resources.md#user) | Create or remove a system user |
+| [`user`](docs/resources.md#user) | Create or remove a system user; update shell, home, and groups on existing users |
 | [`cron`](docs/resources.md#cron) | Manage a cron job file in `/etc/cron.d/` |
 | [`sysctl`](docs/resources.md#sysctl) | Set a Linux kernel parameter |
 | [`apt_repo`](docs/resources.md#apt_repo) | Add or remove an APT repository with its GPG key |
 | [`docker_compose`](docs/resources.md#docker_compose) | Manage a Docker Compose stack |
 | [`download`](docs/resources.md#download) | Download a file from a URL, optionally extracting an archive |
+| [`hostname`](docs/resources.md#hostname) | Set the static system hostname (requires systemd) |
+| [`timezone`](docs/resources.md#timezone) | Set the system timezone by IANA name (requires systemd) |
+| [`mount`](docs/resources.md#mount) | Manage an `/etc/fstab` entry and mount state |
+| [`git`](docs/resources.md#git) | Clone a git repository and keep it checked out at a ref |
 
 You can also define your own resource types as data in `verg/resources/`. See [docs/resources.md - Custom resource types](docs/resources.md#custom-resource-types) for the definition format, param schema, and a worked example.
 
