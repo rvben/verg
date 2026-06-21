@@ -1,8 +1,11 @@
 [resource_def.lineinfile]
 description = "Ensure a line is present in (or absent from) a file"
+# The check must return 0 (converged) or 1 (drift); any other exit is an error.
+# grep returns 2 for a missing file, so guard file existence with [ -f ] to keep
+# the result a clean 0/1 even when the target file does not exist yet.
 check = '''
-if [ "$VERG_PARAM_state" = present ]; then grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"
-else ! grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path" 2>/dev/null; fi
+if [ "$VERG_PARAM_state" = present ]; then [ -f "$VERG_PARAM_path" ] && grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"
+else ! { [ -f "$VERG_PARAM_path" ] && grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"; }; fi
 '''
 apply = '''
 if [ "$VERG_PARAM_state" = present ]; then printf '%s\n' "$VERG_PARAM_line" >> "$VERG_PARAM_path"
