@@ -7,6 +7,12 @@ use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 /// Returns true when `r` looks like a git object SHA: all hexadecimal digits,
 /// length 7 to 40 inclusive. Git accepts abbreviated SHAs (7+ chars) for
 /// checkout; a full SHA is 40 chars.
+///
+/// Known limitation: a branch or tag whose name is itself all-hex and 7-40
+/// chars (e.g. "deadbeef") is classified as a SHA, so `clone` omits `--branch`
+/// for it. Convergence is unaffected (the post-clone `checkout <ref>` resolves
+/// the tag/branch); only the clone is a full default-branch clone rather than a
+/// branch-scoped one. There is no way to disambiguate without querying the repo.
 pub fn is_sha(r: &str) -> bool {
     let len = r.len();
     (7..=40).contains(&len) && r.chars().all(|c| c.is_ascii_hexdigit())
@@ -225,6 +231,15 @@ mod tests {
     #[test]
     fn is_sha_rejects_tag_like_name() {
         assert!(!is_sha("v1.2.3"));
+    }
+
+    #[test]
+    fn is_sha_treats_all_hex_name_as_sha_known_limitation() {
+        // A tag/branch literally named in all-hex (7-40 chars) is classified as
+        // a SHA. This is the documented heuristic limit; convergence still works
+        // because the post-clone checkout resolves the ref. Pin the behavior so
+        // a future change to the heuristic is a conscious decision.
+        assert!(is_sha("deadbeef"));
     }
 
     // --- clone_args ---
