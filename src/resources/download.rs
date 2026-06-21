@@ -43,27 +43,32 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     let mut changes = Vec::new();
 
     if Path::new(dest).exists() {
-        // Verify checksum if specified
+        // Determine whether the existing file must be replaced (checksum drift).
+        let mut needs_redownload = false;
         if let Some(expected) = checksum {
             let output = run_cmd("sha256sum", &[dest])?;
             let actual = String::from_utf8_lossy(&output.stdout);
             let actual_hash = actual.split_whitespace().next().unwrap_or("");
             if actual_hash != expected {
+                needs_redownload = true;
                 changes.push("checksum mismatch (re-download)".to_string());
-                if !dry_run {
-                    std::fs::remove_file(dest).map_err(|e| {
-                        Error::Resource(format!("failed to remove stale {dest}: {e}"))
-                    })?;
-                }
             }
         }
 
-        // Verify mode if specified
-        if let Some(mode_str) = mode_str {
-            let desired_mode = parse_octal_mode(mode_str)?;
-            if let Ok(meta) = std::fs::metadata(dest) {
+        if !needs_redownload {
+            // The file content is correct; only reconcile mode/owner against the
+            // file we are keeping. A re-download path sets mode/owner fresh after
+            // download, so these checks would be against a stale (or deleted) file.
+
+            // Verify mode if specified.
+            if let Some(mode_str) = mode_str {
+                let desired_mode = parse_octal_mode(mode_str)?;
                 use std::os::unix::fs::PermissionsExt;
-                let current_mode = meta.permissions().mode() & 0o7777;
+                let current_mode = std::fs::metadata(dest)
+                    .map_err(|e| Error::Resource(format!("failed to stat {dest}: {e}")))?
+                    .permissions()
+                    .mode()
+                    & 0o7777;
                 if current_mode != desired_mode {
                     changes.push(format!("mode {current_mode:04o} -> {desired_mode:04o}"));
                     if !dry_run {
@@ -71,30 +76,33 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                     }
                 }
             }
-        }
 
-        // Verify owner if specified
-        if let Some(owner) = owner
-            && Path::new(dest).exists()
-        {
-            let ls_output = run_cmd("ls", &["-ld", dest])?;
-            let ls_line = String::from_utf8_lossy(&ls_output.stdout);
-            let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
-            if current_owner != owner {
-                changes.push(format!("owner {current_owner} -> {owner}"));
-                if !dry_run {
-                    run_checked("chown", &[owner, dest], "chown")?;
+            // Verify owner if specified.
+            if let Some(owner) = owner {
+                let ls_output = run_cmd("ls", &["-ld", dest])?;
+                let ls_line = String::from_utf8_lossy(&ls_output.stdout);
+                let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
+                if current_owner != owner {
+                    changes.push(format!("owner {current_owner} -> {owner}"));
+                    if !dry_run {
+                        run_checked("chown", &[owner, dest], "chown")?;
+                    }
                 }
             }
-        }
 
-        // If only metadata drifted, no re-download needed
-        if changes.is_empty() || !changes.iter().any(|c| c.contains("re-download")) {
+            // Existing file is correct (content reconciled, mode/owner applied).
             return Ok(ResourceResult::from_changes(
                 "download",
                 resource.name.clone(),
                 &changes,
             ));
+        }
+
+        // Re-download needed: remove the stale file now (apply only); mode/owner
+        // are applied after the fresh download below.
+        if !dry_run {
+            std::fs::remove_file(dest)
+                .map_err(|e| Error::Resource(format!("failed to remove stale {dest}: {e}")))?;
         }
     }
 
@@ -303,6 +311,44 @@ fn remove(dest: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_file_without_checksum_reconciles_mode_without_redownload() {
+        // An existing file with no checksum and a drifting mode is reconciled in
+        // place (chmod), reported, and NOT re-downloaded (the url is unreachable,
+        // so a re-download attempt would error instead of returning Changed).
+        use crate::resources::ResourceStatus;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("artifact");
+        std::fs::write(&path, "data\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut props = std::collections::HashMap::new();
+        props.insert(
+            "url".to_string(),
+            toml::Value::String("http://203.0.113.1/artifact".into()),
+        );
+        props.insert(
+            "dest".to_string(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        );
+        props.insert("mode".to_string(), toml::Value::String("0600".into()));
+        let r = crate::resources::test_resource("download", "a", props);
+
+        let result = execute(&r, false).unwrap();
+        assert_eq!(result.status, ResourceStatus::Changed);
+        assert!(
+            result.diff.unwrap_or_default().contains("mode"),
+            "mode drift must be reported"
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o600, "mode must be reconciled in place");
+
+        // Idempotent: a second run reconciles nothing and does not re-download.
+        assert_eq!(execute(&r, false).unwrap().status, ResourceStatus::Ok);
+    }
 
     #[test]
     fn extracted_file_requires_name_match() {

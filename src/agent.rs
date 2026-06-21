@@ -558,18 +558,36 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
             // Interpolate register sentinel tokens
             let interpolated = interpolate_registers(resource, &registers);
 
-            // In dry-run mode, flag resources with unresolved register values
-            if dry_run && has_unresolved_registers(&interpolated) {
-                results.push(ResourceResult {
-                    resource_type: resource.resource_type.clone(),
-                    name: resource.name.clone(),
-                    status: ResourceStatus::Changed,
-                    diff: Some("register values not available in dry-run".into()),
-                    from: None,
-                    to: None,
-                    output: None,
-                    error: None,
-                });
+            // Handle props that still reference a register value that was never
+            // produced (e.g. the producing resource was skipped by its `when`
+            // condition, so its register was never set).
+            if has_unresolved_registers(&interpolated) {
+                if dry_run {
+                    // In dry-run the value is simply not available yet; report a
+                    // pending change rather than failing.
+                    results.push(ResourceResult {
+                        resource_type: resource.resource_type.clone(),
+                        name: resource.name.clone(),
+                        status: ResourceStatus::Changed,
+                        diff: Some("register values not available in dry-run".into()),
+                        from: None,
+                        to: None,
+                        output: None,
+                        error: None,
+                    });
+                    continue;
+                }
+                // In apply mode, executing with the literal sentinel string would
+                // corrupt state (it would be written/run verbatim). Fail clearly
+                // and mark this resource failed so its dependents are skipped.
+                results.push(ResourceResult::failed(
+                    resource.resource_type.clone(),
+                    resource.name.clone(),
+                    "unresolved register reference: a referenced register was never \
+                     set (its producing resource may have been skipped by `when`)"
+                        .to_string(),
+                ));
+                failed_fqns.insert(resource.fqn());
                 continue;
             }
 
@@ -868,6 +886,57 @@ mod tests {
 
     /// A failing native provider does not abort the run: an independent sibling
     /// resource (no `after` dependency) still executes and reports its own status.
+    #[test]
+    fn unresolved_register_fails_in_apply_and_reports_pending_in_dry_run() {
+        use crate::resources::{REGISTER_SENTINEL, REGISTER_SENTINEL_END};
+        // A prop references a register that no resource produced (e.g. the
+        // producer was skipped by `when`). The literal sentinel must NEVER reach
+        // the executor: apply fails clearly, dry-run reports a pending change.
+        let sentinel = format!("{REGISTER_SENTINEL}missing{REGISTER_SENTINEL_END}");
+        let mut props = HashMap::new();
+        props.insert(
+            "path".into(),
+            toml::Value::String("/verg-should-never-write".into()),
+        );
+        props.insert(
+            "content".into(),
+            toml::Value::String(format!("value={sentinel}")),
+        );
+        let resource = ResolvedResource {
+            resource_type: "file".into(),
+            name: "d".into(),
+            props,
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+            sensitive: false,
+        };
+
+        // Apply: must FAIL with a clear message, not execute with the sentinel.
+        let summary = execute_bundle(make_bundle("h", vec![resource.clone()]), false).unwrap();
+        assert_eq!(summary.resources.len(), 1);
+        assert_eq!(summary.resources[0].status, ResourceStatus::Failed);
+        assert!(
+            summary.resources[0]
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("unresolved register"),
+            "got: {:?}",
+            summary.resources[0].error
+        );
+        assert!(
+            !std::path::Path::new("/verg-should-never-write").exists(),
+            "the sentinel content must never be written"
+        );
+
+        // Dry-run: reports Changed (value not yet available), not Failed.
+        let dry = execute_bundle(make_bundle("h", vec![resource]), true).unwrap();
+        assert_eq!(dry.resources[0].status, ResourceStatus::Changed);
+    }
+
     #[test]
     fn execute_bundle_failing_provider_does_not_abort_siblings() {
         use crate::provider_def::ProviderDef;
