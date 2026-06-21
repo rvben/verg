@@ -139,7 +139,6 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
 
         let inventory_ctx = Arc::new(inventory.to_template_context());
         let state_files = Arc::new(state_files);
-        let _resource_defs = Arc::new(resource_defs);
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.parallel));
         let mut join_set = JoinSet::new();
