@@ -17,6 +17,7 @@ Desired-state infrastructure convergence engine. A fast, stateless alternative t
 - **Simple** - declare state in TOML files with Jinja2 templating for dynamic values. Strict config validation catches typos before any SSH connection is opened.
 - **Agent-friendly** - `--json` output, `verg schema` for machine-readable resource schemas, and structured exit codes make verg easy to drive from scripts and AI agents.
 - **Secure by default** - agent binary is checksum-verified before and after transfer; strict SSH host key checking; config validated locally before touching any target.
+- **Extensible** - define your own resource types as TOML data in `verg/resources/`; no recompile required.
 
 ## Install
 
@@ -158,6 +159,8 @@ See [docs/resources.md](docs/resources.md) for the full common attributes refere
 | [`apt_repo`](docs/resources.md#apt_repo) | Add or remove an APT repository with its GPG key |
 | [`docker_compose`](docs/resources.md#docker_compose) | Manage a Docker Compose stack |
 | [`download`](docs/resources.md#download) | Download a file from a URL, optionally extracting an archive |
+
+You can also define your own resource types as data in `verg/resources/`. See [docs/resources.md - Custom resource types](docs/resources.md#custom-resource-types) for the definition format, param schema, and a worked example.
 
 ## Complete Example
 

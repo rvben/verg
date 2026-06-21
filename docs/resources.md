@@ -151,6 +151,120 @@ env_name = "production"
 
 ---
 
+## Custom resource types
+
+verg lets you define your own resource types as data - no recompile required. Define them in TOML files inside `verg/resources/`, and verg treats them as first-class resources alongside the built-ins.
+
+### Definition file format
+
+Place one or more `.toml` files in `verg/resources/`. Each file can contain multiple definitions:
+
+```toml
+[resource_def.<type>]
+description = "What this resource type does"
+check = "..."   # shell script: exits 0 (converged), 1 (drift), >=2 (error)
+apply = "..."   # shell script: run when check exits 1
+
+[resource_def.<type>.params]
+param_name = { type = "string|integer|float|boolean", required = true|false }
+```
+
+- `<type>` becomes the resource type name used in state files (`[resource.<type>.<name>]`).
+- The type name must not collide with a built-in type (`pkg`, `file`, `service`, `cmd`, `user`, `cron`, `sysctl`, `apt_repo`, `docker_compose`, `download`, `directory`). Collisions are rejected at load time.
+- Each definition file is loaded lexicographically. A type name may only appear once across all files; a duplicate is a config error.
+- Files that are not `.toml` are ignored.
+
+### Param schema
+
+Each param entry under `[resource_def.<type>.params]` accepts:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `type` | string | `"string"` | One of `string`, `integer`, `float`, `boolean` |
+| `required` | bool | `false` | Reject an instance that omits this param |
+| `default` | literal | none | Fallback value when the instance omits this param; must match `type`; not a template expression |
+| `enum` | array of strings | none | For `string` params: restrict allowed values (and the default, if set) to this list |
+
+Param names must match `[a-zA-Z_][a-zA-Z0-9_]*`. The following names are reserved and cannot be used as param names: `after`, `notify`, `when`, `handler`, `template`, `register`, `vars`, `sensitive`, `source`, `compose_file`, `env_file`.
+
+### How params reach check and apply scripts
+
+Param values are passed exclusively as environment variables. For a param named `path`, the script receives `VERG_PARAM_path`. The value is the instance prop if present (interpolated from `{{ ... }}` template expressions at bundle build time), or the param's literal `default` if the instance omits the prop.
+
+**Always reference param variables quoted**, for example `"$VERG_PARAM_path"`. Values are never interpolated into the command string, so a value containing `$(...)` or backticks is treated as literal data, not executed. This prevents shell injection.
+
+Scripts inherit the same environment as `cmd` resources (a restricted PATH, no environment clearing). A param value containing a NUL byte is rejected before spawning.
+
+### Check and apply contract
+
+| Check exit code | Meaning |
+|----------------|---------|
+| `0` | Already converged - verg reports Ok, apply does not run |
+| `1` | Drift detected - verg runs apply (or reports Changed in dry-run) |
+| `>=2` or signal | Check itself failed - verg reports Failed |
+
+Check stdout (trimmed) becomes the diff message shown in `verg diff` and `verg apply` output when drift is detected. If check stdout is empty on drift, the message defaults to "would change" (dry-run) or "changed" (apply).
+
+Apply exit behavior: exit 0 is success; any non-zero exit is a failure, and stderr is included in the error message.
+
+**Dry-run (`verg diff` / `verg check`):** the check always runs; the apply script never runs.
+
+#### Writing a good check script
+
+The check must return 0 or 1. Guard against tools that can return exit codes >=2, which verg would treat as an error rather than "not converged". A common trap is `grep` on a missing file - `grep` returns exit 2 when the file does not exist, not exit 1 (not found). Guard with `[ -f "$file" ]` before calling `grep`:
+
+```sh
+# BUGGY: grep returns 2 if the file does not exist yet
+grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"
+
+# CORRECT: guard file existence first so the result is always 0 or 1
+[ -f "$VERG_PARAM_path" ] && grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"
+```
+
+### Common attributes
+
+Custom resource instances support all common attributes: `after`, `when`, `notify`, `register`, `sensitive`, `handler`, `template`, `vars`. They participate in the same DAG and handler system as built-in resources.
+
+### Schema integration
+
+`verg schema` includes custom types under `resource_types` with a `"custom": true` marker and the full param schema. The schema is loaded from `verg/resources/` at the time `verg schema` runs; malformed definitions surface as errors.
+
+### Example: `lineinfile`
+
+The following definition ensures a line is present in (or absent from) a file. Save it as `verg/resources/lineinfile.toml`:
+
+```toml
+[resource_def.lineinfile]
+description = "Ensure a line is present in (or absent from) a file"
+# The check must return 0 (converged) or 1 (drift); any other exit is an error.
+# grep returns 2 for a missing file, so guard file existence with [ -f ] to keep
+# the result a clean 0/1 even when the target file does not exist yet.
+check = '''
+if [ "$VERG_PARAM_state" = present ]; then [ -f "$VERG_PARAM_path" ] && grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"
+else ! { [ -f "$VERG_PARAM_path" ] && grep -qxF -- "$VERG_PARAM_line" "$VERG_PARAM_path"; }; fi
+'''
+apply = '''
+if [ "$VERG_PARAM_state" = present ]; then printf '%s\n' "$VERG_PARAM_line" >> "$VERG_PARAM_path"
+else grep -vxF -- "$VERG_PARAM_line" "$VERG_PARAM_path" > "$VERG_PARAM_path.tmp" && mv "$VERG_PARAM_path.tmp" "$VERG_PARAM_path"; fi
+'''
+
+[resource_def.lineinfile.params]
+path  = { type = "string", required = true }
+line  = { type = "string", required = true }
+state = { type = "string", default = "present", enum = ["present", "absent"] }
+```
+
+Usage in a state file:
+
+```toml
+[resource.lineinfile.ip-forward-sysctl-conf]
+path  = "/etc/sysctl.d/99-forward.conf"
+line  = "net.ipv4.ip_forward=1"
+state = "present"
+```
+
+---
+
 ## pkg
 
 Install or remove system packages. Auto-detects the package manager: `apt-get` is tried first, then `dnf`, then `pacman`.
