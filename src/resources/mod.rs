@@ -2,6 +2,7 @@ pub mod apt_repo;
 pub mod atomic;
 pub mod cmd;
 pub mod cron;
+pub mod custom;
 pub mod dag;
 pub mod directory;
 pub mod docker_compose;
@@ -21,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::error::Error;
+use crate::resource_def::ResourceDef;
 
 /// Minimal secure PATH for root command resolution (independent of the inherited
 /// environment). Includes /usr/local/bin for docker/compose.
@@ -242,6 +244,7 @@ pub fn execute_resource(
     resource: &ResolvedResource,
     dry_run: bool,
     notified: bool,
+    defs: &HashMap<String, ResourceDef>,
 ) -> ResourceResult {
     let result = match resource.resource_type.as_str() {
         "apt_repo" => apt_repo::execute(resource, dry_run),
@@ -255,7 +258,13 @@ pub fn execute_resource(
         "cmd" => cmd::execute(resource, dry_run, notified),
         "cron" => cron::execute(resource, dry_run),
         "user" => user::execute(resource, dry_run),
-        other => Err(Error::Resource(format!("unknown resource type: {other}"))),
+        other => {
+            if let Some(def) = defs.get(other) {
+                custom::execute(resource, def, dry_run)
+            } else {
+                Err(Error::Resource(format!("unknown resource type: {other}")))
+            }
+        }
     };
 
     match result {
@@ -298,6 +307,50 @@ pub fn run_cmd(cmd: &str, args: &[&str]) -> Result<std::process::Output, Error> 
         .env("PATH", SECURE_PATH)
         .output()
         .map_err(|e| Error::Resource(format!("failed to run {cmd}: {e}")))
+}
+
+/// Run a command with additional environment variables on top of the inherited
+/// parent environment, mirroring `run_cmd` (inherit parent env, set PATH to
+/// SECURE_PATH) and additionally setting each entry in `extra_env`.
+///
+/// Rejects any extra_env value containing a NUL byte before spawning, since
+/// process environment values cannot contain NUL.
+pub fn run_cmd_with_env(
+    cmd: &str,
+    args: &[&str],
+    extra_env: &HashMap<String, String>,
+) -> Result<std::process::Output, Error> {
+    for (k, v) in extra_env {
+        if v.contains('\0') {
+            return Err(Error::Resource(format!(
+                "env var {k} contains a NUL byte, which is not allowed in process environment values"
+            )));
+        }
+    }
+    let mut command = ProcessCommand::new(cmd);
+    command.args(args).env("PATH", SECURE_PATH);
+    for (k, v) in extra_env {
+        command.env(k, v);
+    }
+    command
+        .output()
+        .map_err(|e| Error::Resource(format!("failed to run {cmd}: {e}")))
+}
+
+/// Truncate a stderr string to at most ~2000 bytes for inclusion in error
+/// messages, ensuring the cut happens on a char boundary.
+pub fn truncate_stderr(s: &str) -> String {
+    const MAX: usize = 2000;
+    if s.len() <= MAX {
+        s.to_string()
+    } else {
+        // Walk back from MAX to find a char boundary.
+        let mut end = MAX;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...(truncated)", &s[..end])
+    }
 }
 
 /// Run a command, piping `stdin_data` to its stdin.

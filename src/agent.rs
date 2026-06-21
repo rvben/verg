@@ -337,8 +337,12 @@ mod notify {
 }
 
 /// Execute a handler resource, bypassing guard requirements.
-fn execute_handler(resource: &ResolvedResource, dry_run: bool) -> ResourceResult {
-    let mut result = resources::execute_resource(resource, dry_run, true);
+fn execute_handler(
+    resource: &ResolvedResource,
+    dry_run: bool,
+    defs: &std::collections::HashMap<String, crate::resource_def::ResourceDef>,
+) -> ResourceResult {
+    let mut result = resources::execute_resource(resource, dry_run, true, defs);
     result.name = format!("{} (handler)", result.name);
     result
 }
@@ -487,6 +491,9 @@ fn is_handler_fqn(target: &str, handler_fqns: &HashSet<String>) -> bool {
 /// Returns `Err` only when the normal-resource DAG cannot be resolved (dependency
 /// cycle or unknown dependency). All other failures are recorded inside the summary.
 pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error> {
+    // Extract resource_defs before the bundle is consumed by into_iter.
+    let resource_defs = bundle.resource_defs.clone();
+
     // Partition resources into normal vs handler
     let (normal_resources, handler_resources): (Vec<ResolvedResource>, Vec<ResolvedResource>) =
         bundle.resources.into_iter().partition(|r| !r.handler);
@@ -564,7 +571,7 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                 continue;
             }
 
-            let result = resources::execute_resource(&interpolated, dry_run, false);
+            let result = resources::execute_resource(&interpolated, dry_run, false, &resource_defs);
 
             // Capture register output before redaction so downstream interpolation
             // still resolves even when the resource is marked sensitive.
@@ -606,7 +613,7 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                 for layer in &handler_layers {
                     for resource in layer {
                         let interpolated = interpolate_registers(resource, &registers);
-                        let result = execute_handler(&interpolated, dry_run);
+                        let result = execute_handler(&interpolated, dry_run, &resource_defs);
                         let result = resources::redact_result(result, resource.sensitive);
                         results.push(result);
                     }
