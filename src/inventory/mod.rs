@@ -146,7 +146,14 @@ impl Inventory {
                 Ok(matches)
             }
             Selector::Exclude(inner) => {
-                let excluded = self.filter(inner)?;
+                // Excluding a set that matches no hosts excludes nothing (set
+                // difference A \ {} = A). A `prod:!down` selector must not fail
+                // just because the `down` group is currently empty.
+                let excluded = match self.filter(inner) {
+                    Ok(hosts) => hosts,
+                    Err(Error::TargetNotFound(_)) => Vec::new(),
+                    Err(e) => return Err(e),
+                };
                 let excluded_names: std::collections::HashSet<_> =
                     excluded.iter().map(|h| &h.name).collect();
                 Ok(self
@@ -333,6 +340,26 @@ custom = "from_group"
         let inv = build_test_inventory();
         let sel = selector::parse_selector("nonexistent").unwrap();
         assert!(matches!(inv.filter(&sel), Err(Error::TargetNotFound(_))));
+    }
+
+    #[test]
+    fn exclude_of_empty_group_excludes_nothing() {
+        // `prod:!monitoring` where no host is in `monitoring` must return the
+        // prod hosts, not fail with TargetNotFound.
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("prod:!monitoring").unwrap();
+        let hosts = inv.filter(&sel).unwrap();
+        let mut names: Vec<_> = hosts.iter().map(|h| h.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["db1", "web1"]);
+    }
+
+    #[test]
+    fn bare_exclude_of_empty_group_returns_all() {
+        let inv = build_test_inventory();
+        let sel = selector::parse_selector("!monitoring").unwrap();
+        let hosts = inv.filter(&sel).unwrap();
+        assert_eq!(hosts.len(), 3, "excluding an empty group excludes nothing");
     }
 
     #[cfg(unix)]
