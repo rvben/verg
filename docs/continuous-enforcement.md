@@ -98,7 +98,11 @@ verg-agent serve --source /etc/verg/bundle.toml --interval 30m
 verg-agent serve --source https://bundles.example.com/web1.toml --interval 30m
 ```
 
-HTTPS sources are fetched using `curl -fsSL`. A non-zero curl exit (404, connection failure, TLS error) is treated as a transient error in loop mode: it is logged to stderr and the daemon sleeps until the next interval. The daemon does not exit on fetch or parse failures.
+HTTP/HTTPS sources are fetched using `curl -fsSL`. A non-zero curl exit (404, connection failure, TLS error) is treated as a transient error in loop mode: it is logged to stderr and the daemon sleeps until the next interval. The daemon does not exit on fetch or parse failures.
+
+A bundle source (local or remote) is bounded to 64 MiB; a larger bundle is rejected rather than read into memory. The remote stream is read through the same bound, so an oversized or unbounded response cannot exhaust memory.
+
+A plain `http://` source prints a warning to stderr on every fetch: a published bundle contains decrypted secrets in plaintext, so over unencrypted http they can be read or replaced (MITM) in transit. Prefer `https://` or a local path.
 
 ### Trust and bundle integrity
 
@@ -128,7 +132,7 @@ In loop mode (with `--interval`), errors from individual cycles are logged but t
 
 Default: `/var/lib/verg/runs`
 
-After each convergence cycle, the agent writes a JSON report to `<report-dir>/<timestamp>-serve.json`. Reports are redacted: payload bodies (`from`, `to`, `output`) are stripped and long diffs are truncated to 200 characters. This matches the apply-log redaction policy and avoids persisting secrets on disk.
+After each convergence cycle, the agent writes a JSON report to `<report-dir>/<timestamp>-serve.json`. Reports are redacted: payload bodies (`from`, `to`, `output`) are stripped and long diffs are truncated to 200 bytes (at a UTF-8 character boundary). This matches the apply-log redaction policy and avoids persisting secrets on disk.
 
 The report format:
 

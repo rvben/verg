@@ -104,5 +104,8 @@ The `--targets` flag accepts a selector expression over the combined inventory:
 | `!x` | Exclude `x` |
 | `prod:!db` | In group `prod` but not group `db` |
 
-An unknown selector name is an error (exit code 6). Parentheses are not
-supported.
+An unknown selector name is an error (exit code 6). The one exception is an
+exclusion (`!x`): excluding a group or host that matches nothing excludes
+nothing rather than erroring, so `prod:!down` still works when the `down` group
+is empty (a misspelled exclusion is therefore silently a no-op). Parentheses are
+not supported.

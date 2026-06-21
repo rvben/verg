@@ -100,7 +100,11 @@ The `--targets` flag accepts a selector expression:
 | `!x` | Exclude `x` |
 | `prod:!db` | In group `prod` but not group `db` |
 
-An unknown selector name is an error (exit code 6). Parentheses are not supported.
+An unknown selector name is an error (exit code 6). The one exception is an
+exclusion (`!x`): excluding a group or host that matches nothing excludes
+nothing rather than erroring, so `prod:!down` still works when the `down` group
+is empty (and a misspelled exclusion is silently a no-op). Parentheses are not
+supported.
 
 Hosts can also be generated dynamically by a command via an `[inventory]`
 section in `hosts.toml`. See [docs/inventory.md](docs/inventory.md) for the

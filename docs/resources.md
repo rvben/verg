@@ -172,7 +172,7 @@ param_name = { type = "string|integer|float|boolean", required = true|false }
 ```
 
 - `<type>` becomes the resource type name used in state files (`[resource.<type>.<name>]`).
-- The type name must not collide with a built-in type (`pkg`, `file`, `service`, `cmd`, `user`, `cron`, `sysctl`, `apt_repo`, `docker_compose`, `download`, `directory`). Collisions are rejected at load time.
+- The type name must not collide with any built-in type (`apt_repo`, `directory`, `docker_compose`, `download`, `git`, `pkg`, `file`, `hostname`, `mount`, `service`, `sysctl`, `timezone`, `cmd`, `cron`, `user`) or with a native provider of the same name. Collisions are rejected at load time.
 - Each definition file is loaded lexicographically. A type name may only appear once across all files; a duplicate is a config error.
 - Files that are not `.toml` are ignored.
 
