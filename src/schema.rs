@@ -607,9 +607,19 @@ mod tests {
         );
         let value = build_resource_types(&HashMap::new(), &providers);
         let obj = value.as_object().expect("object");
-        assert!(
-            obj.contains_key("dns_record"),
-            "provider type must be in schema"
+        let entry = obj
+            .get("dns_record")
+            .and_then(|v| v.as_object())
+            .expect("provider type must be in schema");
+        assert_eq!(
+            entry.get("provider").and_then(|v| v.as_bool()),
+            Some(true),
+            "provider entry must carry the \"provider\": true marker"
+        );
+        assert_eq!(
+            entry.get("description").and_then(|v| v.as_str()),
+            Some("DNS"),
+            "provider description must be exposed in the schema"
         );
     }
 
