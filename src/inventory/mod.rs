@@ -27,11 +27,30 @@ impl Inventory {
         let hosts_path = base_dir.join("hosts.toml");
         let groups_dir = base_dir.join("groups");
 
-        let host_defs = if hosts_path.exists() {
-            static_hosts::load_hosts(&hosts_path)?.hosts
+        let parsed = if hosts_path.exists() {
+            static_hosts::load_hosts(&hosts_path)?
         } else {
-            HashMap::new()
+            static_hosts::ParsedHosts {
+                hosts: HashMap::new(),
+                inventory: None,
+            }
         };
+        let mut host_defs = parsed.hosts;
+
+        // Dynamic inventory: run the configured command on the control host and
+        // merge its hosts. A name defined both statically and dynamically is an
+        // error (no silent override).
+        if let Some(cfg) = parsed.inventory {
+            let dynamic = static_hosts::run_inventory_command(&cfg, base_dir)?;
+            for (name, def) in dynamic {
+                if host_defs.contains_key(&name) {
+                    return Err(Error::Config(format!(
+                        "host '{name}' is defined both in [hosts] and by the inventory command"
+                    )));
+                }
+                host_defs.insert(name, def);
+            }
+        }
 
         let group_defs = groups::load_groups(&groups_dir)?;
 
@@ -314,5 +333,93 @@ custom = "from_group"
         let inv = build_test_inventory();
         let sel = selector::parse_selector("nonexistent").unwrap();
         assert!(matches!(inv.filter(&sel), Err(Error::TargetNotFound(_))));
+    }
+
+    #[cfg(unix)]
+    fn write_inventory_script(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("inv.sh");
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_merges_dynamic_and_static_hosts() {
+        let dir = TempDir::new().unwrap();
+        let script = write_inventory_script(
+            dir.path(),
+            "#!/bin/sh\nprintf '%s' '{\"dyn1\":{\"address\":\"192.0.2.20\",\"groups\":[\"web\"]}}'\n",
+        );
+        std::fs::write(
+            dir.path().join("hosts.toml"),
+            format!(
+                "[hosts.static1]\naddress = \"192.0.2.10\"\n\n[inventory]\ncommand = [\"{}\"]\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let groups_dir = dir.path().join("groups");
+        std::fs::create_dir(&groups_dir).unwrap();
+        std::fs::write(groups_dir.join("web.toml"), "[vars]\nhttp_port = 80\n").unwrap();
+
+        let inv = Inventory::load(dir.path()).unwrap();
+        assert_eq!(inv.hosts.len(), 2);
+        assert_eq!(inv.hosts["static1"].address, "192.0.2.10");
+        assert_eq!(inv.hosts["dyn1"].address, "192.0.2.20");
+        // A dynamic host in group "web" receives that group's vars.
+        assert_eq!(
+            inv.hosts["dyn1"].vars["http_port"],
+            toml::Value::Integer(80)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_errors_on_static_dynamic_name_collision() {
+        let dir = TempDir::new().unwrap();
+        let script = write_inventory_script(
+            dir.path(),
+            "#!/bin/sh\nprintf '%s' '{\"web1\":{\"address\":\"192.0.2.99\"}}'\n",
+        );
+        std::fs::write(
+            dir.path().join("hosts.toml"),
+            format!(
+                "[hosts.web1]\naddress = \"192.0.2.10\"\n\n[inventory]\ncommand = [\"{}\"]\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let err = Inventory::load(dir.path()).unwrap_err();
+        match err {
+            Error::Config(msg) => assert!(msg.contains("web1"), "got: {msg}"),
+            other => panic!("expected Error::Config, got: {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_with_only_dynamic_hosts() {
+        let dir = TempDir::new().unwrap();
+        let script = write_inventory_script(
+            dir.path(),
+            "#!/bin/sh\nprintf '%s' '{\"d1\":{\"address\":\"192.0.2.30\"},\"d2\":{\"address\":\"192.0.2.31\"}}'\n",
+        );
+        std::fs::write(
+            dir.path().join("hosts.toml"),
+            format!(
+                "[inventory]\ncommand = [\"{}\"]\n",
+                script.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let inv = Inventory::load(dir.path()).unwrap();
+        assert_eq!(inv.hosts.len(), 2);
+        assert_eq!(inv.hosts["d1"].address, "192.0.2.30");
+        assert_eq!(inv.hosts["d2"].user, "root");
     }
 }
