@@ -9,6 +9,7 @@ pub mod docker_compose;
 pub mod download;
 pub mod file;
 pub mod hostname;
+pub mod mount;
 pub mod pkg;
 pub mod service;
 pub mod sysctl;
@@ -257,6 +258,7 @@ pub fn execute_resource(
         "file" => file::execute(resource, dry_run),
         "hostname" => hostname::execute(resource, dry_run),
         "service" => service::execute(resource, dry_run),
+        "mount" => mount::execute(resource, dry_run),
         "sysctl" => sysctl::execute(resource, dry_run),
         "timezone" => timezone::execute(resource, dry_run),
         "cmd" => cmd::execute(resource, dry_run, notified),

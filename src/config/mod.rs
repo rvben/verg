@@ -234,6 +234,7 @@ pub fn known_resource_types() -> &'static [&'static str] {
         "pkg",
         "file",
         "hostname",
+        "mount",
         "service",
         "sysctl",
         "timezone",
@@ -281,6 +282,9 @@ fn specific_fields(resource_type: &str) -> Option<&'static [&'static str]> {
         "service" => &["name", "state", "enabled"],
         "timezone" => &["timezone"],
         "docker_compose" => &["project_dir", "compose_file", "env_file", "state", "pull"],
+        "mount" => &[
+            "device", "path", "fstype", "options", "dump", "pass", "state",
+        ],
         "sysctl" => &["key", "value", "persist"],
         "cmd" => &["command", "creates", "unless", "onlyif", "stdin"],
         "user" => &["name", "state", "home", "shell", "groups"],
@@ -517,6 +521,7 @@ mod tests {
             "pkg",
             "file",
             "hostname",
+            "mount",
             "service",
             "sysctl",
             "timezone",
@@ -529,7 +534,7 @@ mod tests {
                 "missing known resource type: {t}"
             );
         }
-        assert_eq!(known_resource_types().len(), 13);
+        assert_eq!(known_resource_types().len(), 14);
     }
 
     #[test]

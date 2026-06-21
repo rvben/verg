@@ -235,6 +235,20 @@ fn resource_schemas() -> Value {
             },
             "required": ["hostname"],
         },
+        "mount": {
+            "description": "Manage /etc/fstab entries and mount state",
+            "properties": {
+                "device": {"type": "string", "description": "Block device or remote share (e.g. /dev/sdb1, UUID=..., server:/export)"},
+                "path": {"type": "string", "description": "Absolute mountpoint path (no whitespace; fstab \\040 encoding not supported in v1)"},
+                "fstype": {"type": "string", "description": "Filesystem type (e.g. ext4, xfs, nfs, tmpfs)"},
+                "options": {"type": "string", "description": "Mount options (default: 'defaults')"},
+                "dump": {"type": "string", "description": "fstab dump field (default: '0')"},
+                "pass": {"type": "string", "description": "fstab pass field for fsck order (default: '0')"},
+                "state": {"type": "string", "enum": ["mounted", "absent"], "default": "mounted"},
+            },
+            "required": ["device", "path", "fstype"],
+            "note": "Writes /etc/fstab atomically before mounting. mount/umount require root. Mountpoints containing whitespace are rejected; use bind mounts or rename the path.",
+        },
         "service": {
             "description": "Manage systemd services",
             "properties": {
@@ -457,6 +471,7 @@ mod tests {
         assert!(obj.contains_key("pkg"));
         assert!(obj.contains_key("file"));
         assert!(obj.contains_key("hostname"));
+        assert!(obj.contains_key("mount"));
         assert!(obj.contains_key("service"));
         assert!(obj.contains_key("cmd"));
         assert!(obj.contains_key("user"));
