@@ -329,6 +329,19 @@ pub fn referenced_defs(
         .collect()
 }
 
+/// Returns the subset of `all` whose type key appears in at least one resource.
+pub fn referenced_provider_defs(
+    resources: &[ResolvedResource],
+    all: &HashMap<String, crate::provider_def::ProviderDef>,
+) -> HashMap<String, crate::provider_def::ProviderDef> {
+    let used_types: std::collections::HashSet<&str> =
+        resources.iter().map(|r| r.resource_type.as_str()).collect();
+    all.iter()
+        .filter(|(k, _)| used_types.contains(k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bundle {
     pub host: String,
@@ -337,6 +350,8 @@ pub struct Bundle {
     pub facts: HashMap<String, String>,
     #[serde(default)]
     pub resource_defs: HashMap<String, ResourceDef>,
+    #[serde(default)]
+    pub provider_defs: HashMap<String, crate::provider_def::ProviderDef>,
 }
 
 impl Bundle {
@@ -385,6 +400,7 @@ impl Bundle {
             resources,
             facts,
             resource_defs: HashMap::new(),
+            provider_defs: HashMap::new(),
         })
     }
 
@@ -876,6 +892,68 @@ state = "present"
 
         assert_eq!(deserialized.resource_defs.len(), 1);
         assert_eq!(deserialized.resource_defs["myapp"], custom_def);
+    }
+
+    #[test]
+    fn bundle_with_provider_defs_roundtrips_toml() {
+        use crate::provider_def::ProviderDef;
+        let mut bundle = Bundle {
+            host: "web1".into(),
+            resources: vec![],
+            facts: HashMap::new(),
+            resource_defs: HashMap::new(),
+            provider_defs: HashMap::new(),
+        };
+        // Gnarly source: multi-line, embedded quotes, backslashes, and a triple
+        // quote, to prove the TOML round-trip preserves arbitrary script text.
+        let gnarly = "#!/usr/bin/env python3\nimport json,sys\nx = \"\"\"a\\nb\"\"\"\nprint('{\"status\":\"ok\"}')\n";
+        bundle.provider_defs.insert(
+            "dns_record".into(),
+            ProviderDef {
+                description: "DNS".into(),
+                interpreter: vec!["python3".into()],
+                source: gnarly.into(),
+                params: HashMap::new(),
+            },
+        );
+        let toml = bundle.to_toml().unwrap();
+        let back = Bundle::from_toml(&toml).unwrap();
+        assert_eq!(back.provider_defs.len(), 1);
+        assert_eq!(
+            back.provider_defs["dns_record"].source, gnarly,
+            "embedded source must survive the TOML round-trip byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn referenced_provider_defs_keeps_only_used() {
+        use crate::provider_def::ProviderDef;
+        let resources = vec![ResolvedResource {
+            resource_type: "dns_record".into(),
+            name: "www".into(),
+            props: HashMap::new(),
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+            sensitive: false,
+        }];
+        let mut all = HashMap::new();
+        for t in ["dns_record", "unused"] {
+            all.insert(
+                t.to_string(),
+                ProviderDef {
+                    description: String::new(),
+                    interpreter: vec!["/bin/sh".into()],
+                    source: "x".into(),
+                    params: HashMap::new(),
+                },
+            );
+        }
+        let used = referenced_provider_defs(&resources, &all);
+        assert_eq!(used.len(), 1);
+        assert!(used.contains_key("dns_record"));
     }
 
     #[test]

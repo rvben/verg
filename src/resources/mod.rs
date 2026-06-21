@@ -250,6 +250,7 @@ pub fn execute_resource(
     dry_run: bool,
     notified: bool,
     defs: &HashMap<String, ResourceDef>,
+    providers: &HashMap<String, crate::provider_def::ProviderDef>,
 ) -> ResourceResult {
     let result = match resource.resource_type.as_str() {
         "apt_repo" => apt_repo::execute(resource, dry_run),
@@ -268,7 +269,9 @@ pub fn execute_resource(
         "cron" => cron::execute(resource, dry_run),
         "user" => user::execute(resource, dry_run),
         other => {
-            if let Some(def) = defs.get(other) {
+            if let Some(provider) = providers.get(other) {
+                native::execute(resource, provider, dry_run)
+            } else if let Some(def) = defs.get(other) {
                 custom::execute(resource, def, dry_run)
             } else {
                 Err(Error::Resource(format!("unknown resource type: {other}")))

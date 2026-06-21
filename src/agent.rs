@@ -341,8 +341,9 @@ fn execute_handler(
     resource: &ResolvedResource,
     dry_run: bool,
     defs: &std::collections::HashMap<String, crate::resource_def::ResourceDef>,
+    providers: &std::collections::HashMap<String, crate::provider_def::ProviderDef>,
 ) -> ResourceResult {
-    let mut result = resources::execute_resource(resource, dry_run, true, defs);
+    let mut result = resources::execute_resource(resource, dry_run, true, defs, providers);
     result.name = format!("{} (handler)", result.name);
     result
 }
@@ -491,8 +492,9 @@ fn is_handler_fqn(target: &str, handler_fqns: &HashSet<String>) -> bool {
 /// Returns `Err` only when the normal-resource DAG cannot be resolved (dependency
 /// cycle or unknown dependency). All other failures are recorded inside the summary.
 pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error> {
-    // Extract resource_defs before the bundle is consumed by into_iter.
+    // Extract resource_defs and provider_defs before the bundle is consumed by into_iter.
     let resource_defs = bundle.resource_defs.clone();
+    let provider_defs = bundle.provider_defs.clone();
 
     // Partition resources into normal vs handler
     let (normal_resources, handler_resources): (Vec<ResolvedResource>, Vec<ResolvedResource>) =
@@ -571,7 +573,13 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                 continue;
             }
 
-            let result = resources::execute_resource(&interpolated, dry_run, false, &resource_defs);
+            let result = resources::execute_resource(
+                &interpolated,
+                dry_run,
+                false,
+                &resource_defs,
+                &provider_defs,
+            );
 
             // Capture register output before redaction so downstream interpolation
             // still resolves even when the resource is marked sensitive.
@@ -613,7 +621,8 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                 for layer in &handler_layers {
                     for resource in layer {
                         let interpolated = interpolate_registers(resource, &registers);
-                        let result = execute_handler(&interpolated, dry_run, &resource_defs);
+                        let result =
+                            execute_handler(&interpolated, dry_run, &resource_defs, &provider_defs);
                         let result = resources::redact_result(result, resource.sensitive);
                         results.push(result);
                     }
@@ -654,6 +663,7 @@ mod tests {
             resources,
             facts: HashMap::new(),
             resource_defs: HashMap::new(),
+            provider_defs: HashMap::new(),
         }
     }
 
@@ -667,6 +677,7 @@ mod tests {
             resources,
             facts,
             resource_defs: HashMap::new(),
+            provider_defs: HashMap::new(),
         }
     }
 
@@ -817,6 +828,42 @@ mod tests {
         );
         assert_eq!(notify_results[0].status, ResourceStatus::Changed);
         assert_eq!(notify_results[0].name, "nginx (restart)");
+    }
+
+    #[test]
+    fn execute_bundle_runs_native_provider() {
+        use crate::provider_def::ProviderDef;
+        let mut provider_defs = HashMap::new();
+        provider_defs.insert(
+            "myprov".to_string(),
+            ProviderDef {
+                description: String::new(),
+                interpreter: vec!["/bin/sh".into()],
+                source: r#"printf '%s' '{"status":"changed","diff":"did it"}'"#.into(),
+                params: HashMap::new(),
+            },
+        );
+        let bundle = Bundle {
+            host: "h".into(),
+            resources: vec![ResolvedResource {
+                resource_type: "myprov".into(),
+                name: "thing".into(),
+                props: HashMap::new(),
+                after: vec![],
+                notify: vec![],
+                when: None,
+                handler: false,
+                register: None,
+                sensitive: false,
+            }],
+            facts: HashMap::new(),
+            resource_defs: HashMap::new(),
+            provider_defs,
+        };
+        let summary = execute_bundle(bundle, false).unwrap();
+        assert_eq!(summary.resources.len(), 1);
+        assert_eq!(summary.resources[0].status, ResourceStatus::Changed);
+        assert_eq!(summary.resources[0].diff.as_deref(), Some("did it"));
     }
 
     /// A handler resource (handler=true) runs only when a changed resource

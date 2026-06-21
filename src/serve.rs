@@ -246,6 +246,50 @@ content = "{content}"
         assert!(result.is_err(), "expected Err for invalid TOML bundle");
     }
 
+    #[test]
+    fn serve_once_runs_native_provider_from_bundle() {
+        use crate::bundle::Bundle;
+        use crate::provider_def::ProviderDef;
+        use crate::resources::{ResolvedResource, ResourceStatus};
+        use std::collections::HashMap;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut provider_defs = HashMap::new();
+        provider_defs.insert(
+            "myprov".to_string(),
+            ProviderDef {
+                description: String::new(),
+                interpreter: vec!["/bin/sh".into()],
+                source: r#"printf '%s' '{"status":"changed","diff":"pulled"}'"#.into(),
+                params: HashMap::new(),
+            },
+        );
+        let bundle = Bundle {
+            host: "h".into(),
+            resources: vec![ResolvedResource {
+                resource_type: "myprov".into(),
+                name: "t".into(),
+                props: HashMap::new(),
+                after: vec![],
+                notify: vec![],
+                when: None,
+                handler: false,
+                register: None,
+                sensitive: false,
+            }],
+            facts: HashMap::new(),
+            resource_defs: HashMap::new(),
+            provider_defs,
+        };
+        let bundle_path = dir.path().join("bundle.toml");
+        std::fs::write(&bundle_path, bundle.to_toml().unwrap()).unwrap();
+
+        let summary = serve_once(bundle_path.to_str().unwrap(), dir.path()).unwrap();
+        assert_eq!(summary.resources.len(), 1);
+        assert_eq!(summary.resources[0].status, ResourceStatus::Changed);
+        assert_eq!(summary.resources[0].diff.as_deref(), Some("pulled"));
+    }
+
     // Note: the https fetch path is NOT unit-tested here because it requires
     // an actual network call (or a mock HTTP server). Code structure ensures
     // that the curl exit-code check is always applied. Coverage of the https
