@@ -19,6 +19,7 @@ fail()  { echo -e "${RED}[e2e] FAIL:${NC} $*"; exit 1; }
 cleanup() {
     info "Cleaning up..."
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    rm -rf "$SCRIPT_DIR/.publish"
 }
 trap cleanup EXIT
 
@@ -186,6 +187,32 @@ if [ "$LOG_COUNT" -gt 0 ]; then
 else
     warn "  no changelog files found"
 fi
+
+# --- Test 7: publish + serve (pull mode) ---
+
+info "Test 7: publish + serve (pull mode)..."
+
+PUBLISH_EXIT=0
+"$VERG" publish --targets all --dest "$SCRIPT_DIR/.publish" --path "$SCRIPT_DIR/fixture" 2>/dev/null || PUBLISH_EXIT=$?
+if [ "$PUBLISH_EXIT" -ge 2 ]; then
+    fail "publish exited with error code $PUBLISH_EXIT"
+fi
+if [ ! -f "$SCRIPT_DIR/.publish/target.toml" ]; then
+    fail "publish did not write target.toml"
+fi
+info "  publish: wrote target.toml"
+
+docker cp "$SCRIPT_DIR/.publish/target.toml" "$CONTAINER_NAME:/tmp/bundle.toml"
+
+SERVE_EXIT=0
+docker exec "$CONTAINER_NAME" /usr/local/bin/verg-agent serve --once --source /tmp/bundle.toml --report-dir /tmp/verg-runs || SERVE_EXIT=$?
+if [ "$SERVE_EXIT" -ge 2 ]; then
+    fail "serve --once exited with error code $SERVE_EXIT"
+fi
+info "  serve --once: exit $SERVE_EXIT"
+
+docker exec "$CONTAINER_NAME" sh -c 'ls /tmp/verg-runs/*-serve.json' >/dev/null 2>&1 || fail "no serve report written"
+info "  serve report written"
 
 # --- Done ---
 
