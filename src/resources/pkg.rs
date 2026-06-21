@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, ResourceStatus, run_cmd};
+use super::{ResolvedResource, ResourceResult, run_cmd};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PkgManager {
@@ -119,7 +119,6 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         ));
     };
 
-    let mut any_changed = false;
     let mut changes = Vec::new();
     let mut cache_updated = false;
 
@@ -127,47 +126,32 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         let installed = is_installed(&mgr, name)?;
         match (state, installed) {
             ("present", false) => {
-                if dry_run {
-                    changes.push(format!("+{name}"));
-                } else {
+                // Record the change for BOTH dry-run and apply so an applied
+                // install is reported in the diff, not just planned.
+                changes.push(format!("+{name}"));
+                if !dry_run {
                     if !cache_updated {
                         update_cache(&mgr)?;
                         cache_updated = true;
                     }
                     install(&mgr, name)?;
                 }
-                any_changed = true;
             }
             ("absent", true) => {
-                if dry_run {
-                    changes.push(format!("-{name}"));
-                } else {
+                changes.push(format!("-{name}"));
+                if !dry_run {
                     remove(&mgr, name)?;
                 }
-                any_changed = true;
             }
             _ => {}
         }
     }
 
-    Ok(ResourceResult {
-        resource_type: "pkg".into(),
-        name: resource.name.clone(),
-        status: if any_changed {
-            ResourceStatus::Changed
-        } else {
-            ResourceStatus::Ok
-        },
-        diff: if changes.is_empty() {
-            None
-        } else {
-            Some(changes.join(", "))
-        },
-        from: None,
-        to: None,
-        error: None,
-        output: None,
-    })
+    Ok(ResourceResult::from_changes(
+        "pkg",
+        resource.name.clone(),
+        &changes,
+    ))
 }
 
 #[cfg(test)]
