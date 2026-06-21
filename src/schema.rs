@@ -35,9 +35,8 @@ pub fn run(
                     {"name": "--targets", "type": "string", "required": true, "description": "Target pattern to match hosts"}
                 ],
                 "output_fields": [
-                    {"name": "host", "type": "string"},
-                    {"name": "resources", "type": "array"},
-                    {"name": "summary", "type": "object"}
+                    {"name": "items", "type": "array", "description": "Per-host results; each item is an object with host (string), resources (array), and summary (object with ok/changed/failed/skipped counts)"},
+                    {"name": "total", "type": "integer", "description": "Number of hosts in the result"}
                 ]
             },
             {
@@ -51,8 +50,7 @@ pub fn run(
                     {"name": "--fields", "type": "string", "description": "Comma-separated list of fields to include"}
                 ],
                 "output_fields": [
-                    {"name": "host", "type": "string"},
-                    {"name": "resources", "type": "array"},
+                    {"name": "items", "type": "array", "description": "Per-host results (paginated); each item is an object with host (string), summary (object), and resources (array)"},
                     {"name": "total", "type": "integer", "description": "Total number of hosts (the pagination unit)"},
                     {"name": "limit", "type": "integer"},
                     {"name": "offset", "type": "integer"}
@@ -66,9 +64,8 @@ pub fn run(
                     {"name": "--targets", "type": "string", "required": false, "default": "all", "description": "Target pattern to match hosts (default: all)"}
                 ],
                 "output_fields": [
-                    {"name": "host", "type": "string"},
-                    {"name": "resources", "type": "array"},
-                    {"name": "summary", "type": "object"}
+                    {"name": "items", "type": "array", "description": "Per-host results; each item is an object with host (string), resources (array), and summary (object with ok/changed/failed/skipped counts)"},
+                    {"name": "total", "type": "integer", "description": "Number of hosts in the result"}
                 ]
             },
             {
