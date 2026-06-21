@@ -866,6 +866,68 @@ mod tests {
         assert_eq!(summary.resources[0].diff.as_deref(), Some("did it"));
     }
 
+    /// A failing native provider does not abort the run: an independent sibling
+    /// resource (no `after` dependency) still executes and reports its own status.
+    #[test]
+    fn execute_bundle_failing_provider_does_not_abort_siblings() {
+        use crate::provider_def::ProviderDef;
+        let mut provider_defs = HashMap::new();
+        provider_defs.insert(
+            "badprov".to_string(),
+            ProviderDef {
+                description: String::new(),
+                interpreter: vec!["/bin/sh".into()],
+                source: r#"printf '%s' '{"status":"failed","error":"nope"}'"#.into(),
+                params: HashMap::new(),
+            },
+        );
+        provider_defs.insert(
+            "goodprov".to_string(),
+            ProviderDef {
+                description: String::new(),
+                interpreter: vec!["/bin/sh".into()],
+                source: r#"printf '%s' '{"status":"changed","diff":"ok"}'"#.into(),
+                params: HashMap::new(),
+            },
+        );
+        let mk = |rtype: &str, name: &str| ResolvedResource {
+            resource_type: rtype.into(),
+            name: name.into(),
+            props: HashMap::new(),
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: false,
+            register: None,
+            sensitive: false,
+        };
+        let bundle = Bundle {
+            host: "h".into(),
+            resources: vec![mk("badprov", "a"), mk("goodprov", "b")],
+            facts: HashMap::new(),
+            resource_defs: HashMap::new(),
+            provider_defs,
+        };
+        let summary = execute_bundle(bundle, false).unwrap();
+        assert_eq!(summary.resources.len(), 2, "both resources must report");
+        let bad = summary
+            .resources
+            .iter()
+            .find(|r| r.resource_type == "badprov")
+            .expect("failed provider present");
+        let good = summary
+            .resources
+            .iter()
+            .find(|r| r.resource_type == "goodprov")
+            .expect("sibling provider present");
+        assert_eq!(bad.status, ResourceStatus::Failed);
+        assert_eq!(
+            good.status,
+            ResourceStatus::Changed,
+            "an independent sibling must still run after a provider fails"
+        );
+    }
+
     /// A handler resource (handler=true) runs only when a changed resource
     /// notifies its FQN. If nothing notifies it, it does not appear in results.
     #[test]
