@@ -100,6 +100,14 @@ verg-agent serve --source https://bundles.example.com/web1.toml --interval 30m
 
 HTTPS sources are fetched using `curl -fsSL`. A non-zero curl exit (404, connection failure, TLS error) is treated as a transient error in loop mode: it is logged to stderr and the daemon sleeps until the next interval. The daemon does not exit on fetch or parse failures.
 
+### Trust and bundle integrity
+
+A pulled bundle is executed as root, so whoever controls the source controls the host. This is the same trust boundary as the push model (whoever can pipe a bundle to the agent), just moved to the source. Treat the bundle source as a privileged channel:
+
+- Serve over HTTPS with a valid certificate, and restrict who can write to the bundle directory or object store.
+- verg verifies the curl exit status (a 404 or TLS failure is never parsed as a bundle), but it does NOT yet verify a bundle signature. Integrity beyond TLS (transport) is the operator's responsibility for now; bundle signing is a candidate future enhancement.
+- Do not point `--source` at an untrusted or world-writable location.
+
 ### `--interval` and `--once`
 
 `--interval` is required when `--once` is not set. A zero interval is rejected.

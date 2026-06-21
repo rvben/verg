@@ -68,7 +68,13 @@ pub fn run(
                 match bundle.to_toml() {
                     Ok(toml_str) => {
                         let out_path = dest.join(format!("{}.toml", host.name));
-                        if let Err(e) = std::fs::write(&out_path, &toml_str) {
+                        // Atomic write (temp + rename) so a pull-mode agent
+                        // reading the file concurrently never sees a partial bundle.
+                        if let Err(e) = crate::resources::atomic::write_atomic(
+                            &out_path,
+                            toml_str.as_bytes(),
+                            None,
+                        ) {
                             eprintln!(
                                 "publish: {}: failed to write {}: {e}",
                                 host.name,

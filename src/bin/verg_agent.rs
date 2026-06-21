@@ -41,7 +41,14 @@ fn main() {
             interval,
             once,
             report_dir,
-        }) => run_serve(&source, interval.as_deref(), once, &report_dir),
+        }) => {
+            // --dry-run only applies to the stdin push path. Warn rather than
+            // silently converge for real when a user pairs it with serve.
+            if cli.dry_run {
+                eprintln!("warning: --dry-run is ignored in serve mode; serve always converges");
+            }
+            run_serve(&source, interval.as_deref(), once, &report_dir);
+        }
     }
 }
 
