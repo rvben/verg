@@ -1,0 +1,272 @@
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use chrono::Utc;
+
+use crate::bundle::Bundle;
+use crate::changelog::write_serve_report;
+use crate::error::Error;
+use crate::resources::RunSummary;
+
+/// Resolve the polling interval for serve mode.
+///
+/// When `once` is true, the interval is ignored and `Ok(None)` is returned.
+/// When `once` is false, `interval` is required; a missing value or a zero
+/// duration are both rejected with a config error.
+pub fn resolve_interval(interval: Option<&str>, once: bool) -> Result<Option<Duration>, Error> {
+    if once {
+        return Ok(None);
+    }
+    let s = interval.ok_or_else(|| {
+        Error::Config(
+            "--interval is required when --once is not set; pass e.g. --interval 5m".to_string(),
+        )
+    })?;
+    let d = crate::duration::parse_duration(s)?;
+    if d.is_zero() {
+        return Err(Error::Config(
+            "--interval must be greater than zero; a zero duration would busy-loop".to_string(),
+        ));
+    }
+    Ok(Some(d))
+}
+
+/// Fetch the bundle text from `source`.
+///
+/// If `source` starts with `http://` or `https://`, curl is used to fetch it.
+/// curl's exit code is checked explicitly because `run_cmd` does not error on
+/// a non-zero exit; a 404 or connect failure would otherwise be silently
+/// parsed as a bundle. On a non-zero curl exit, an error is returned that
+/// includes curl's stderr. On success, stdout is decoded as UTF-8.
+///
+/// For any other `source`, the value is treated as a local filesystem path and
+/// read directly.
+fn fetch_bundle_text(source: &str) -> Result<String, Error> {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        let output = crate::resources::run_cmd("curl", &["-fsSL", source])?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Error::Config(format!(
+                "curl failed to fetch {source}: {stderr}"
+            )));
+        }
+        String::from_utf8(output.stdout)
+            .map_err(|e| Error::Parse(format!("bundle from {source} is not valid UTF-8: {e}")))
+    } else {
+        std::fs::read_to_string(source)
+            .map_err(|e| Error::Config(format!("failed to read bundle from {source}: {e}")))
+    }
+}
+
+/// Fetch a bundle, converge once, write a redacted report, and return the summary.
+///
+/// The report filename is `<report_dir>/<timestamp>-serve.json`. The timestamp
+/// uses `%Y-%m-%dT%H-%M-%S` (colons replaced with hyphens) so the filename is
+/// valid on all platforms.
+pub fn serve_once(source: &str, report_dir: &Path) -> Result<RunSummary, Error> {
+    let text = fetch_bundle_text(source)?;
+    let bundle = Bundle::from_toml(&text)?;
+    let summary = crate::agent::execute_bundle(bundle, false)?;
+    let now = Utc::now();
+    let nanos = now.timestamp_subsec_nanos();
+    let timestamp = format!("{}-{nanos:09}", now.format("%Y-%m-%dT%H-%M-%S"));
+    write_serve_report(report_dir, &summary, source, &timestamp)?;
+    Ok(summary)
+}
+
+/// The filesystem path of the most-recently-written serve report in `report_dir`.
+///
+/// Scans for `*-serve.json` files and returns the one with the lexicographically
+/// largest name (which equals the most recent due to the `%Y-%m-%dT%H-%M-%S`
+/// prefix). Returns `None` if the directory is empty or does not exist.
+pub fn latest_report(report_dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(report_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.ends_with("-serve.json"))
+                .unwrap_or(false)
+        })
+        .max_by(|a, b| a.file_name().cmp(&b.file_name()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // ---------------------------------------------------------------------------
+    // resolve_interval
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn resolve_interval_once_true_returns_none() {
+        assert_eq!(resolve_interval(None, true).unwrap(), None);
+        assert_eq!(resolve_interval(Some("5m"), true).unwrap(), None);
+        assert_eq!(resolve_interval(Some("0s"), true).unwrap(), None);
+    }
+
+    #[test]
+    fn resolve_interval_once_false_with_valid_interval() {
+        let result = resolve_interval(Some("5m"), false).unwrap();
+        assert_eq!(result, Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn resolve_interval_once_false_with_seconds() {
+        let result = resolve_interval(Some("30s"), false).unwrap();
+        assert_eq!(result, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn resolve_interval_once_false_missing_interval_errors() {
+        let err = resolve_interval(None, false).unwrap_err();
+        assert!(
+            matches!(err, Error::Config(_)),
+            "expected Config error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_interval_once_false_zero_duration_errors() {
+        let err = resolve_interval(Some("0s"), false).unwrap_err();
+        assert!(
+            matches!(err, Error::Config(_)),
+            "expected Config error for zero duration, got: {err}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // serve_once - local file source
+    // ---------------------------------------------------------------------------
+
+    /// Build a minimal bundle TOML that writes a file to `target_path`.
+    fn minimal_file_bundle_toml(host: &str, target_path: &str, content: &str) -> String {
+        // Escape the content and path for TOML inline strings.
+        // We use a simple format that avoids characters needing TOML escaping
+        // in the test strings we pass.
+        format!(
+            r#"host = "{host}"
+
+[[resources]]
+resource_type = "file"
+name = "test-file"
+after = []
+notify = []
+handler = false
+sensitive = false
+
+[resources.props]
+path = "{target_path}"
+content = "{content}"
+"#
+        )
+    }
+
+    #[test]
+    fn serve_once_local_file_creates_report_and_returns_summary() {
+        let tmp = TempDir::new().unwrap();
+        let target_file = tmp.path().join("output.txt");
+        let report_dir = tmp.path().join("reports");
+
+        // Write bundle TOML to a temp file.
+        let bundle_toml =
+            minimal_file_bundle_toml("test-host", target_file.to_str().unwrap(), "hello serve");
+        let bundle_path = tmp.path().join("bundle.toml");
+        std::fs::write(&bundle_path, &bundle_toml).unwrap();
+
+        let source = bundle_path.to_str().unwrap();
+        let summary = serve_once(source, &report_dir).unwrap();
+
+        // The file resource should have converged (Changed on first run).
+        assert_eq!(summary.host, "test-host");
+        assert_eq!(summary.resources.len(), 1);
+        assert!(
+            summary.summary.changed > 0 || summary.summary.ok > 0,
+            "expected at least one changed or ok resource, got: {:?}",
+            summary.summary
+        );
+
+        // A report file must exist in report_dir.
+        let report_files: Vec<_> = std::fs::read_dir(&report_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with("-serve.json"))
+            .collect();
+        assert_eq!(report_files.len(), 1, "expected exactly one serve report");
+
+        // The report must be valid JSON.
+        let report_content = std::fs::read_to_string(report_files[0].path()).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&report_content).unwrap();
+        assert_eq!(parsed["source"], source);
+    }
+
+    #[test]
+    fn serve_once_idempotent_second_call_returns_ok() {
+        let tmp = TempDir::new().unwrap();
+        let target_file = tmp.path().join("output2.txt");
+        let report_dir = tmp.path().join("reports2");
+
+        let bundle_toml = minimal_file_bundle_toml(
+            "test-host",
+            target_file.to_str().unwrap(),
+            "idempotent content",
+        );
+        let bundle_path = tmp.path().join("bundle2.toml");
+        std::fs::write(&bundle_path, &bundle_toml).unwrap();
+
+        let source = bundle_path.to_str().unwrap();
+
+        // First call: file does not exist -> Changed.
+        let s1 = serve_once(source, &report_dir).unwrap();
+        assert!(
+            s1.summary.changed > 0 || s1.summary.ok > 0,
+            "first call should change or ok"
+        );
+
+        // Second call: file already has the right content -> Ok (no change).
+        let s2 = serve_once(source, &report_dir).unwrap();
+        assert_eq!(
+            s2.summary.changed, 0,
+            "second call must not change an already-converged file"
+        );
+        assert_eq!(s2.summary.failed, 0);
+
+        // Both reports must be present.
+        let report_files: Vec<_> = std::fs::read_dir(&report_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with("-serve.json"))
+            .collect();
+        assert_eq!(report_files.len(), 2, "expected two serve reports");
+    }
+
+    #[test]
+    fn serve_once_nonexistent_source_returns_err() {
+        let tmp = TempDir::new().unwrap();
+        let report_dir = tmp.path().join("reports");
+        let result = serve_once("/nonexistent/path/bundle.toml", &report_dir);
+        assert!(
+            result.is_err(),
+            "expected Err for non-existent source, got Ok"
+        );
+    }
+
+    #[test]
+    fn serve_once_invalid_toml_returns_err() {
+        let tmp = TempDir::new().unwrap();
+        let report_dir = tmp.path().join("reports");
+        let bundle_path = tmp.path().join("bad.toml");
+        std::fs::write(&bundle_path, "this is not valid bundle toml!!!").unwrap();
+        let result = serve_once(bundle_path.to_str().unwrap(), &report_dir);
+        assert!(result.is_err(), "expected Err for invalid TOML bundle");
+    }
+
+    // Note: the https fetch path is NOT unit-tested here because it requires
+    // an actual network call (or a mock HTTP server). Code structure ensures
+    // that the curl exit-code check is always applied. Coverage of the https
+    // path is provided by the e2e test suite.
+}
