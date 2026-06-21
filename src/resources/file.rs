@@ -209,4 +209,39 @@ mod tests {
         // Idempotent.
         assert_eq!(execute(&r, false).unwrap().status, ResourceStatus::Ok);
     }
+
+    #[test]
+    fn mode_only_drift_on_unchanged_content_is_chmod_and_reported() {
+        // Content already matches but the mode drifts: the standalone chmod path
+        // (no content write) must fire and report the mode change.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("conf");
+        std::fs::write(&path, "same\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut props = HashMap::new();
+        props.insert(
+            "path".into(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        );
+        props.insert("content".into(), toml::Value::String("same\n".into()));
+        props.insert("mode".into(), toml::Value::String("0640".into()));
+        let r = resource("conf", props);
+
+        let applied = execute(&r, false).unwrap();
+        assert_eq!(applied.status, ResourceStatus::Changed);
+        let diff = applied.diff.unwrap_or_default();
+        assert!(
+            diff.contains("mode"),
+            "mode-only drift must report mode: {diff}"
+        );
+        assert!(
+            !diff.contains("content"),
+            "content was unchanged, must not be reported: {diff}"
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o640, "chmod must have applied the desired mode");
+
+        assert_eq!(execute(&r, false).unwrap().status, ResourceStatus::Ok);
+    }
 }
