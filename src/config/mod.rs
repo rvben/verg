@@ -173,6 +173,11 @@ fn check_special_key_type(
         "sensitive" | "handler" | "template" if !value.is_bool() => {
             report(policy, format!("{fqn}: '{key}' must be a boolean"))?;
         }
+        // `vars` must be a table; a wrong-typed value is otherwise silently
+        // dropped by the bundle builder (which only matches a Table).
+        "vars" if !value.is_table() => {
+            report(policy, format!("{fqn}: 'vars' must be a table"))?;
+        }
         _ => {}
     }
     Ok(())
@@ -468,6 +473,35 @@ mod tests {
         assert!(
             validate_state_files(&[f], ConfigPolicy::lax(), &defs, &HashMap::new()).is_ok(),
             "lax mode should downgrade all custom validation errors to warnings"
+        );
+    }
+
+    #[test]
+    fn vars_must_be_a_table() {
+        // A wrong-typed `vars` is silently dropped by the bundle builder, so
+        // validation must reject it rather than let it be ignored.
+        let f = parse("[resource.file.conf]\npath = \"/etc/x\"\nvars = \"oops\"\n");
+        let err = validate_state_files(
+            &[f],
+            ConfigPolicy::strict(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("vars"), "got: {err}");
+
+        // A correct table form still validates.
+        let ok = parse(
+            "[resource.file.conf]\npath = \"/etc/x\"\n[resource.file.conf.vars]\nk = \"v\"\n",
+        );
+        assert!(
+            validate_state_files(
+                &[ok],
+                ConfigPolicy::strict(),
+                &HashMap::new(),
+                &HashMap::new()
+            )
+            .is_ok()
         );
     }
 

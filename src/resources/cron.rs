@@ -82,13 +82,16 @@ fn validate_cron_field(label: &str, value: &str) -> Result<(), Error> {
     Ok(())
 }
 
-/// Reject newlines in commands to prevent injecting extra cron lines.
+/// Reject newlines and other control characters in commands. A `\n` would inject
+/// an extra cron line and a `\r` (or other control char) can make crond misparse
+/// the entry. A literal tab is allowed since it can appear inside a command.
 fn validate_command(command: &str) -> Result<(), Error> {
-    if command.contains('\n') {
-        return Err(Error::Resource(
-            "cron command must not contain newlines (use a script file for multi-line commands)"
-                .into(),
-        ));
+    if let Some(bad) = command.chars().find(|&c| c.is_control() && c != '\t') {
+        return Err(Error::Resource(format!(
+            "cron command contains a control character ({:#x}); newlines and control \
+             characters are not allowed (use a script file for multi-line commands)",
+            bad as u32
+        )));
     }
     Ok(())
 }
@@ -395,8 +398,18 @@ mod tests {
     }
 
     #[test]
+    fn command_rejects_carriage_return_and_control_chars() {
+        // A trailing \r makes crond misparse the command; reject it (and other
+        // control characters), consistent with the cron field validation.
+        assert!(validate_command("/usr/bin/backup.sh\r").is_err());
+        assert!(validate_command("echo \x0c").is_err());
+    }
+
+    #[test]
     fn command_accepts_normal_commands() {
         assert!(validate_command("/haven/hours-automation/run.sh --close-week").is_ok());
+        // A literal tab inside a command is allowed.
+        assert!(validate_command("awk '{print\t$1}'").is_ok());
     }
 
     #[test]
