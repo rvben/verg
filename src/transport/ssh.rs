@@ -511,10 +511,14 @@ impl SshTransport {
             ),
             None => String::new(),
         };
+        // Escape single quotes so the version (single-quoted in the remote shell
+        // command) cannot break out of its quoting. The version is a compile-time
+        // semver today, but this install command runs as the SSH user (often root)
+        // on the target, so it is kept robust regardless of the version string.
+        let version_escaped = self.version.replace('\'', "'\\''");
         let install_cmd = format!(
             "{verify}chmod 700 '{tmp_remote}' && mv '{tmp_remote}' {AGENT_PATH} && \
-             printf '%s' '{}' > {VERSION_PATH} || {{ rm -f '{tmp_remote}'; exit 1; }}",
-            self.version
+             printf '%s' '{version_escaped}' > {VERSION_PATH} || {{ rm -f '{tmp_remote}'; exit 1; }}",
         );
         let mut args = self.ssh_base_args();
         if let Some(p) = conn.port {
