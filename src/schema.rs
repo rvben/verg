@@ -46,14 +46,14 @@ pub fn run(
                 "mutating": false,
                 "args": [
                     {"name": "--targets", "type": "string", "required": false, "default": "all", "description": "Target pattern to match hosts (default: all)"},
-                    {"name": "--limit", "type": "integer", "default": 100, "description": "Maximum number of results"},
-                    {"name": "--offset", "type": "integer", "default": 0, "description": "Number of results to skip"},
+                    {"name": "--limit", "type": "integer", "default": 100, "description": "Maximum number of hosts to return (pagination is per host, not per resource)"},
+                    {"name": "--offset", "type": "integer", "default": 0, "description": "Number of hosts to skip"},
                     {"name": "--fields", "type": "string", "description": "Comma-separated list of fields to include"}
                 ],
                 "output_fields": [
                     {"name": "host", "type": "string"},
                     {"name": "resources", "type": "array"},
-                    {"name": "total", "type": "integer"},
+                    {"name": "total", "type": "integer", "description": "Total number of hosts (the pagination unit)"},
                     {"name": "limit", "type": "integer"},
                     {"name": "offset", "type": "integer"}
                 ]
@@ -105,6 +105,18 @@ pub fn run(
             {"kind": "internal_error", "exit_code": 7, "retryable": false, "description": "Unexpected internal error"},
             {"kind": "confirmation_required", "exit_code": 5, "retryable": false, "description": "Operation requires confirmation; pass --yes to proceed non-interactively"},
             {"kind": "conflict", "exit_code": 8, "retryable": false, "description": "State conflict that cannot be automatically resolved"}
+        ],
+        "exit_codes": [
+            {"code": 0, "meaning": "success", "description": "Completed; one or more resources changed (for diff/check: drift was found)"},
+            {"code": 1, "meaning": "nothing_changed", "description": "Completed; everything already matched desired state (no changes, no drift)"},
+            {"code": 2, "meaning": "partial_failure", "description": "Some resources or hosts failed while others succeeded"},
+            {"code": 3, "meaning": "total_failure", "description": "All resources failed with no successes (not a connection issue)"},
+            {"code": 4, "meaning": "connection_error", "description": "Could not reach the target host(s) over SSH"},
+            {"code": 5, "meaning": "invalid_config", "description": "Configuration missing, malformed, or invalid (also: confirmation required without --yes)"},
+            {"code": 6, "meaning": "target_not_found", "description": "No hosts matched the target selector"},
+            {"code": 7, "meaning": "internal_error", "description": "Unexpected internal error"},
+            {"code": 8, "meaning": "conflict", "description": "State conflict that cannot be automatically resolved"},
+            {"code": 130, "meaning": "interrupted", "description": "Interrupted by SIGINT (Ctrl-C)"}
         ],
         "common_properties": {
             "after": {"type": "array", "items": {"type": "string"}, "description": "Resources that must converge first"},

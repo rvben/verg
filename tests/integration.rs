@@ -91,6 +91,23 @@ fn schema_has_clispec_v0_2_fields() {
     );
     assert!(parsed["errors"].is_array(), "errors field must be an array");
 
+    // The exit_codes array documents the complete process exit-code contract,
+    // including the success/nothing-changed/total-failure outcomes the errors
+    // array cannot express. Every code the binary can return must be listed.
+    let exit_codes = parsed["exit_codes"]
+        .as_array()
+        .expect("exit_codes field must be an array");
+    let codes: Vec<i64> = exit_codes
+        .iter()
+        .filter_map(|e| e["code"].as_i64())
+        .collect();
+    for expected in [0, 1, 2, 3, 4, 5, 6, 7, 8, 130] {
+        assert!(
+            codes.contains(&expected),
+            "exit_codes must document code {expected}, got: {codes:?}"
+        );
+    }
+
     let commands = parsed["commands"].as_array().unwrap();
     let command_names: Vec<&str> = commands.iter().filter_map(|c| c["name"].as_str()).collect();
     assert!(
