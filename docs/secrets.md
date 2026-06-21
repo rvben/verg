@@ -133,9 +133,9 @@ content = "{{ secret.app_token }}"
 sensitive = true
 ```
 
-When `sensitive = true`, the `from`, `to`, and `output` fields are omitted entirely from JSON output and the apply changelog. If a diff is present, it is replaced with `"[redacted]"`. Status and error fields are preserved so you can still see whether the resource changed or failed.
+When `sensitive = true`, redaction happens **on the agent, before the result is returned to the control host**: the `from`, `to`, and `output` fields are cleared and, if a diff is present, it is replaced with `"[redacted]"`. Because this happens before the result leaves the agent, the redacted values are what appear in BOTH the live JSON output AND the persisted apply changelog. Status and error fields are preserved so you can still see whether the resource changed or failed.
 
-The changelog (`.verg/logs/*.json`) strips `from`, `to`, and `output` for **all** resources regardless of `sensitive`, and truncates long diffs to 200 characters. Setting `sensitive = true` adds the extra protection of replacing the diff with `"[redacted]"` in live output.
+Independently, the changelog (`.verg/logs/*.json`) strips `from`, `to`, and `output` for **all** resources regardless of `sensitive`, and truncates long diffs to 200 bytes. So a non-sensitive resource never persists its payload either; a sensitive resource shows `"[redacted]"` for its diff (already redacted by the agent) rather than a truncated value.
 
 Without `sensitive = true`, the rendered secret value can appear in `verg apply` output and in `diff`.
 
