@@ -28,7 +28,7 @@ impl Inventory {
         let groups_dir = base_dir.join("groups");
 
         let host_defs = if hosts_path.exists() {
-            static_hosts::load_hosts(&hosts_path)?
+            static_hosts::load_hosts(&hosts_path)?.hosts
         } else {
             HashMap::new()
         };
