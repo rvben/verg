@@ -112,6 +112,15 @@ enum Command {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Build per-host bundles offline and write them to a directory (for pull-mode agents)
+    Publish {
+        /// Hosts/groups to publish bundles for (e.g. all, web, prod:!db)
+        #[arg(long, short)]
+        targets: String,
+        /// Directory to write the per-host bundle files into
+        #[arg(long)]
+        dest: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -265,6 +274,9 @@ async fn run(
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "verg", &mut std::io::stdout());
             Ok(0)
+        }
+        Command::Publish { targets, dest } => {
+            commands::publish::run(&base_dir, &targets, &dest, policy)
         }
     }
 }
