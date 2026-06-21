@@ -1,3 +1,10 @@
 .ssh/
 fixture/.verg/
 .publish/
+
+# Generated age key and encrypted secrets bundle
+.age-key
+fixture/secrets.age
+
+# Conditional secret state file written when age is present
+fixture/state/zz-secret.toml

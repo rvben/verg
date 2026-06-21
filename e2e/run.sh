@@ -16,10 +16,20 @@ info()  { echo -e "${GREEN}[e2e]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[e2e]${NC} $*"; }
 fail()  { echo -e "${RED}[e2e] FAIL:${NC} $*"; exit 1; }
 
+# Clean any stale secret artifacts from a prior run immediately
+rm -f "$SCRIPT_DIR/.age-key" "$SCRIPT_DIR/fixture/secrets.age" "$SCRIPT_DIR/fixture/state/zz-secret.toml"
+if command -v age >/dev/null 2>&1 && command -v age-keygen >/dev/null 2>&1; then
+    SECRETS=1
+else
+    SECRETS=0
+    warn "age not installed; skipping secrets coverage"
+fi
+
 cleanup() {
     info "Cleaning up..."
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     rm -rf "$SCRIPT_DIR/.publish"
+    rm -f "$SCRIPT_DIR/.age-key" "$SCRIPT_DIR/fixture/secrets.age" "$SCRIPT_DIR/fixture/state/zz-secret.toml" /tmp/verg-secrets.toml 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -97,6 +107,23 @@ info "Writing agent version stamp..."
 VERSION=$(grep '^version' "$PROJECT_DIR/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 info "  version: $VERSION"
 ssh -F "$SSH_CONFIG" verg-e2e "mkdir -p /usr/local/share/verg && echo '$VERSION' > /usr/local/share/verg/version"
+
+# --- Secrets setup (age) ---
+
+if [ "$SECRETS" = 1 ]; then
+    age-keygen -o "$SCRIPT_DIR/.age-key" 2>/dev/null
+    RECIP=$(age-keygen -y "$SCRIPT_DIR/.age-key")
+    printf 'app_token = "s3cr3t-token"\n' > /tmp/verg-secrets.toml
+    age --encrypt -r "$RECIP" -o "$SCRIPT_DIR/fixture/secrets.age" /tmp/verg-secrets.toml
+    export VERG_AGE_IDENTITY="$SCRIPT_DIR/.age-key"
+    cat > "$SCRIPT_DIR/fixture/state/zz-secret.toml" <<'EOF'
+[resource.file.app-token]
+path = "/tmp/verg-token.txt"
+content = "{{ secret.app_token }}"
+sensitive = true
+EOF
+    info "  age secrets prepared (VERG_AGE_IDENTITY set)"
+fi
 
 # --- Test 1: diff (dry-run) ---
 
@@ -185,6 +212,14 @@ info "  /tmp/app-checkout: cloned"
 # Check seeded file is present in checkout
 docker exec "$CONTAINER_NAME" test -f /tmp/app-checkout/app.txt || fail "git checkout missing seeded file"
 info "  /tmp/app-checkout/app.txt: present"
+
+# Check secret decryption and rendering (age backend)
+if [ "$SECRETS" = 1 ]; then
+    docker exec "$CONTAINER_NAME" sh -c 'cat /tmp/verg-token.txt' 2>/dev/null | grep -q '^s3cr3t-token$' || fail "secret not decrypted/rendered onto target"
+    info "  /tmp/verg-token.txt: secret decrypted and rendered"
+    if grep -rq 's3cr3t-token' "$SCRIPT_DIR/fixture/.verg/logs/" 2>/dev/null; then fail "secret leaked into changelog"; fi
+    info "  changelog: secret value redacted (not present)"
+fi
 
 # --- Test 4: idempotency ---
 
