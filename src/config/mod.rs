@@ -231,6 +231,7 @@ pub fn known_resource_types() -> &'static [&'static str] {
         "directory",
         "docker_compose",
         "download",
+        "git",
         "pkg",
         "file",
         "hostname",
@@ -276,6 +277,7 @@ fn specific_fields(resource_type: &str) -> Option<&'static [&'static str]> {
         "download" => &[
             "url", "dest", "mode", "owner", "extract", "checksum", "state",
         ],
+        "git" => &["url", "path", "ref", "depth", "state"],
         "pkg" => &["name", "names", "state"],
         "file" => &["path", "content", "source", "mode", "owner"],
         "hostname" => &["hostname"],
@@ -518,6 +520,7 @@ mod tests {
             "directory",
             "docker_compose",
             "download",
+            "git",
             "pkg",
             "file",
             "hostname",
@@ -534,7 +537,7 @@ mod tests {
                 "missing known resource type: {t}"
             );
         }
-        assert_eq!(known_resource_types().len(), 14);
+        assert_eq!(known_resource_types().len(), 15);
     }
 
     #[test]

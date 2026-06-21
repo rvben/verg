@@ -8,6 +8,7 @@ pub mod directory;
 pub mod docker_compose;
 pub mod download;
 pub mod file;
+pub mod git;
 pub mod hostname;
 pub mod mount;
 pub mod pkg;
@@ -254,6 +255,7 @@ pub fn execute_resource(
         "directory" => directory::execute(resource, dry_run),
         "docker_compose" => docker_compose::execute(resource, dry_run),
         "download" => download::execute(resource, dry_run),
+        "git" => git::execute(resource, dry_run),
         "pkg" => pkg::execute(resource, dry_run),
         "file" => file::execute(resource, dry_run),
         "hostname" => hostname::execute(resource, dry_run),

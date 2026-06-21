@@ -309,6 +309,18 @@ fn resource_schemas() -> Value {
             },
             "required": ["name"],
         },
+        "git": {
+            "description": "Clone a git repository and ensure it is checked out at the desired ref",
+            "properties": {
+                "url": {"type": "string", "description": "Repository URL to clone"},
+                "path": {"type": "string", "description": "Local checkout directory on the target"},
+                "ref": {"type": "string", "description": "Branch, tag, or SHA to check out (default: repository default branch)"},
+                "depth": {"type": "string", "description": "Shallow clone depth passed to --depth (integer as string)"},
+                "state": {"type": "string", "enum": ["present", "absent"], "default": "present"},
+            },
+            "required": ["url", "path"],
+            "note": "SHA refs trigger a post-clone checkout rather than --branch. Combining depth with a SHA ref may fail if the SHA is not in the shallow history.",
+        },
         "cron": {
             "description": "Manage cron jobs via /etc/cron.d/<name> files",
             "properties": {
@@ -478,6 +490,7 @@ mod tests {
         assert!(obj.contains_key("sysctl"));
         assert!(obj.contains_key("timezone"));
         assert!(obj.contains_key("cron"));
+        assert!(obj.contains_key("git"));
     }
 
     #[test]
