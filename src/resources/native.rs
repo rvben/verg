@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
@@ -10,6 +11,39 @@ use crate::provider_def::ProviderDef;
 use crate::resources::{
     ResolvedResource, ResourceResult, ResourceStatus, run_cmd_with_stdin, truncate_stderr,
 };
+
+/// Convert a single TOML value to a JSON value for use as a provider param.
+///
+/// String values are passed through literally with no interpretation. Datetime
+/// values become plain ISO-8601 strings. All other types map structurally.
+fn toml_to_json_literal(v: &toml::Value) -> serde_json::Value {
+    match v {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::Value::Number((*i).into()),
+        toml::Value::Float(f) => serde_json::json!(f),
+        toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        toml::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(toml_to_json_literal).collect())
+        }
+        toml::Value::Table(tbl) => {
+            let map = tbl
+                .iter()
+                .map(|(k, v)| (k.clone(), toml_to_json_literal(v)))
+                .collect();
+            serde_json::Value::Object(map)
+        }
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+    }
+}
+
+/// Convert a props map to a JSON object, treating every value literally.
+fn props_to_json(props: &HashMap<String, toml::Value>) -> serde_json::Value {
+    let map = props
+        .iter()
+        .map(|(k, v)| (k.clone(), toml_to_json_literal(v)))
+        .collect();
+    serde_json::Value::Object(map)
+}
 
 const PROTOCOL_VERSION: u32 = 1;
 
@@ -92,8 +126,7 @@ pub fn execute(
     let name = &resource.name;
     let action = if dry_run { "plan" } else { "apply" };
 
-    let params = serde_json::to_value(&resource.props)
-        .map_err(|e| Error::Resource(format!("{rtype} provider: failed to encode params: {e}")))?;
+    let params = props_to_json(&resource.props);
     let request = serde_json::json!({
         "protocol_version": PROTOCOL_VERSION,
         "action": action,
@@ -347,5 +380,67 @@ mod tests {
                     .count()
             })
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn datetime_param_is_a_plain_string_not_a_tagged_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir
+            .path()
+            .join("request.json")
+            .to_string_lossy()
+            .into_owned();
+        let def = sh_provider(&format!(
+            "cat > '{out}'\nprintf '%s' '{{\"status\":\"ok\"}}'"
+        ));
+
+        let dt = "2024-01-02T03:04:05Z"
+            .parse::<toml::value::Datetime>()
+            .unwrap();
+        let mut props = HashMap::new();
+        props.insert("at".to_string(), toml::Value::Datetime(dt));
+
+        let r = execute(&resource(props), &def, true).unwrap();
+        assert_eq!(r.status, ResourceStatus::Ok);
+
+        let req = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            req.contains("2024-01-02"),
+            "datetime text must appear in request: {req}"
+        );
+        assert!(
+            !req.contains("$__toml_private_datetime"),
+            "tagged TOML datetime object must not appear in request: {req}"
+        );
+    }
+
+    #[test]
+    fn env_string_param_is_passed_through_literally() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir
+            .path()
+            .join("request.json")
+            .to_string_lossy()
+            .into_owned();
+        let def = sh_provider(&format!(
+            "cat > '{out}'\nprintf '%s' '{{\"status\":\"ok\"}}'"
+        ));
+
+        let mut props = HashMap::new();
+        props.insert("path".to_string(), toml::Value::String("$env.HOME".into()));
+
+        let r = execute(&resource(props), &def, true).unwrap();
+        assert_eq!(r.status, ResourceStatus::Ok);
+
+        let req = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            req.contains("$env.HOME"),
+            "literal string must be present unchanged: {req}"
+        );
+        // The provider must not have expanded it to an actual path.
+        assert!(
+            !req.contains("/Users/") && !req.contains("/home/"),
+            "env var must not be expanded by the param converter: {req}"
+        );
     }
 }
