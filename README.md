@@ -17,6 +17,7 @@ Desired-state infrastructure convergence engine. A fast, stateless alternative t
 - **Simple** - declare state in TOML files with Jinja2 templating for dynamic values. Strict config validation catches typos before any SSH connection is opened.
 - **Agent-friendly** - `--json` output, `verg schema` for machine-readable resource schemas, and structured exit codes make verg easy to drive from scripts and AI agents.
 - **Secure by default** - agent binary is checksum-verified before and after transfer; strict SSH host key checking; config validated locally before touching any target.
+- **Continuous enforcement** - agents pull and re-converge on a schedule with no central server. See [docs/continuous-enforcement.md](docs/continuous-enforcement.md).
 - **Extensible** - define your own resource types as TOML data in `verg/resources/`; no recompile required.
 
 ## Install
@@ -218,6 +219,7 @@ The FQN for each resource is `type.name` (e.g. `pkg.nginx`, `file.nginx-conf`, `
 | `verg schema` | - | Print resource type schemas as JSON |
 | `verg init` | `--force` | Scaffold a new project directory |
 | `verg completions` | `<bash\|fish\|zsh\|powershell\|elvish>` | Generate shell completions |
+| `verg publish` | `--targets <TARGETS>`, `--dest <DIR>` | Build per-host bundles offline for pull-mode agents |
 
 `apply` has no default target. `--targets` is required to prevent accidental mass applies. Running `apply` in a non-interactive pipeline without `--yes` exits with code 5 (confirmation required).
 
