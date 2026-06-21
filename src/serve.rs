@@ -65,21 +65,51 @@ fn fetch_bundle_text(source: &str) -> Result<String, Error> {
 }
 
 fn fetch_http(source: &str) -> Result<String, Error> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+
+    // Stream curl's stdout through a bounded reader so a chunked or
+    // unknown-length response cannot buffer past the cap into memory.
+    // (`--max-filesize` only pre-checks Content-Length and only aborts
+    // mid-transfer on newer curl, so it is a hint, not the real bound.)
     let max = MAX_BUNDLE_BYTES.to_string();
-    let output = crate::resources::run_cmd("curl", &["-fsSL", "--max-filesize", &max, source])?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut child = Command::new("curl")
+        .args(["-fsSL", "--max-filesize", &max, source])
+        .env("PATH", crate::resources::SECURE_PATH)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Config(format!("failed to run curl for {source}: {e}")))?;
+
+    let stdout = child.stdout.take().expect("curl stdout is piped");
+    // Drain stderr on a separate thread so curl never blocks on a full stderr
+    // pipe while we are reading stdout.
+    let mut stderr_handle = child.stderr.take().expect("curl stderr is piped");
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stderr_handle.read_to_string(&mut buf);
+        buf
+    });
+
+    let text = crate::resources::read_bounded(stdout, MAX_BUNDLE_BYTES);
+    // If we stopped reading early (over-limit), terminate curl; on success it has
+    // already finished writing and exits on its own.
+    if text.is_err() {
+        let _ = child.kill();
+    }
+    let status = child
+        .wait()
+        .map_err(|e| Error::Config(format!("failed to wait for curl: {e}")))?;
+    let stderr = stderr_thread.join().unwrap_or_default();
+
+    let text = text?;
+    if !status.success() {
         return Err(Error::Config(format!(
-            "curl failed to fetch {source}: {stderr}"
+            "curl failed to fetch {source}: {}",
+            stderr.trim()
         )));
     }
-    if output.stdout.len() > MAX_BUNDLE_BYTES {
-        return Err(Error::Config(format!(
-            "bundle from {source} exceeds {MAX_BUNDLE_BYTES} bytes"
-        )));
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|e| Error::Parse(format!("bundle from {source} is not valid UTF-8: {e}")))
+    Ok(text)
 }
 
 /// Fetch a bundle, converge once, write a redacted report, and return the summary.

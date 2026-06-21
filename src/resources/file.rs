@@ -31,6 +31,24 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         None => None,
     };
 
+    // Detect mode drift against the CURRENT on-disk file BEFORE any write. The
+    // content write below applies the mode atomically via write_atomic, so
+    // capturing the pre-write mode here keeps the reported diff accurate (and
+    // identical between dry-run and apply). Mode drift only applies to a file
+    // that already exists; a new file is created with the desired mode directly.
+    let mode_drift: Option<(u32, u32)> = match desired_mode {
+        Some(dm) if target.exists() => {
+            let current_mode = std::fs::metadata(target)
+                .map_err(|e| Error::Resource(format!("failed to stat {path}: {e}")))?
+                .permissions()
+                .mode()
+                & 0o7777;
+            (current_mode != dm).then_some((current_mode, dm))
+        }
+        _ => None,
+    };
+
+    let mut content_written = false;
     if let Some(desired) = &desired_content {
         let current = crate::resources::read_current(target)?;
         if current.as_deref() != Some(desired.as_str()) {
@@ -42,24 +60,19 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 }
                 crate::resources::atomic::write_atomic(target, desired.as_bytes(), desired_mode)
                     .map_err(|e| Error::Resource(format!("failed to write {path}: {e}")))?;
+                content_written = true;
             }
         }
     }
 
-    if let Some(desired_mode) = desired_mode
-        && target.exists()
-    {
-        let current_mode = std::fs::metadata(target)
-            .map_err(|e| Error::Resource(format!("failed to stat {path}: {e}")))?
-            .permissions()
-            .mode()
-            & 0o7777;
-        if current_mode != desired_mode {
-            changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
-            if !dry_run {
-                std::fs::set_permissions(target, std::fs::Permissions::from_mode(desired_mode))
-                    .map_err(|e| Error::Resource(format!("failed to chmod {path}: {e}")))?;
-            }
+    // Report the mode change (computed pre-write). When a content write ran it
+    // already set the desired mode via write_atomic, so only chmod separately
+    // when no content write happened (mode-only drift on an unchanged file).
+    if let Some((current_mode, desired_mode)) = mode_drift {
+        changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
+        if !dry_run && !content_written {
+            std::fs::set_permissions(target, std::fs::Permissions::from_mode(desired_mode))
+                .map_err(|e| Error::Resource(format!("failed to chmod {path}: {e}")))?;
         }
     }
 
@@ -153,5 +166,47 @@ mod tests {
         // Idempotent: a second apply reports no change (mode already correct).
         let second = execute(&r, false).unwrap();
         assert_eq!(second.status, ResourceStatus::Ok);
+    }
+
+    #[test]
+    fn existing_file_content_and_mode_drift_both_reported_on_apply() {
+        // An existing file that drifts in BOTH content and mode must report both
+        // in the apply diff (the mode is applied atomically with the content
+        // write, but the change is still recorded), matching dry-run.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("conf");
+        std::fs::write(&path, "old\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut props = HashMap::new();
+        props.insert(
+            "path".into(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        );
+        props.insert("content".into(), toml::Value::String("new\n".into()));
+        props.insert("mode".into(), toml::Value::String("0600".into()));
+        let r = resource("conf", props);
+
+        // Dry-run reports both content and mode.
+        let dry = execute(&r, true).unwrap();
+        let dry_diff = dry.diff.clone().unwrap_or_default();
+        assert!(dry_diff.contains("content"), "dry-run diff: {dry_diff}");
+        assert!(dry_diff.contains("mode"), "dry-run diff: {dry_diff}");
+
+        // Apply reports the SAME set (content + mode), and converges.
+        let applied = execute(&r, false).unwrap();
+        assert_eq!(applied.status, ResourceStatus::Changed);
+        let diff = applied.diff.unwrap_or_default();
+        assert!(diff.contains("content"), "apply diff: {diff}");
+        assert!(
+            diff.contains("mode"),
+            "apply diff must report mode too: {diff}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o600);
+
+        // Idempotent.
+        assert_eq!(execute(&r, false).unwrap().status, ResourceStatus::Ok);
     }
 }
