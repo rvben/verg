@@ -383,24 +383,23 @@ mod tests {
     }
 
     #[test]
-    fn temp_script_is_cleaned_up() {
-        // A run leaves no verg-provider-* files behind in the temp dir.
-        let before = count_provider_temp_files();
-        let def = sh_provider(r#"printf '%s' '{"status":"ok"}'"#);
-        let _ = execute(&resource(HashMap::new()), &def, false).unwrap();
-        let after = count_provider_temp_files();
-        assert_eq!(before, after, "temp script must be removed after execute");
-    }
-
-    fn count_provider_temp_files() -> usize {
-        let prefix = format!("verg-provider-{}-", std::process::id());
-        std::fs::read_dir(std::env::temp_dir())
-            .map(|rd| {
-                rd.filter_map(|e| e.ok())
-                    .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-                    .count()
-            })
-            .unwrap_or(0)
+    fn temp_script_is_removed_on_drop() {
+        // Deterministically verify the cleanup mechanism: the materialized script
+        // exists while the guard is alive and is removed when it drops. This tests
+        // the exact RAII guard `execute` relies on, without a temp-dir file count
+        // (which would race other tests sharing the process and pid).
+        let path = {
+            let script = TempScript::create("printf '%s' '{\"status\":\"ok\"}'").unwrap();
+            assert!(
+                script.path.exists(),
+                "temp script must exist while the guard is alive"
+            );
+            script.path.clone()
+        };
+        assert!(
+            !path.exists(),
+            "temp script must be removed when the guard drops"
+        );
     }
 
     fn sh_provider_with_params(source: &str, params: HashMap<String, ParamSpec>) -> ProviderDef {
