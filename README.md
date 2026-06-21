@@ -14,6 +14,7 @@ Desired-state infrastructure convergence engine. A fast, stateless alternative t
 
 - **Fast** - pushes a single static binary to each target over SSH; the agent executes locally, so there are no per-task SSH round-trips and no Python dependency on the target.
 - **Stateless** - every run reads actual system state and converges to desired state. No state files are kept on the control host between runs.
+- **Dynamic inventory** - generate hosts from a command (cloud, CMDB, scripts) and merge them with static hosts.
 - **Simple** - declare state in TOML files with Jinja2 templating for dynamic values. Strict config validation catches typos before any SSH connection is opened.
 - **Agent-friendly** - `--json` output, `verg schema` for machine-readable resource schemas, and structured exit codes make verg easy to drive from scripts and AI agents.
 - **Secure by default** - agent binary is checksum-verified before and after transfer; strict SSH host key checking; config validated locally before touching any target.
@@ -99,6 +100,11 @@ The `--targets` flag accepts a selector expression:
 | `prod:!db` | In group `prod` but not group `db` |
 
 An unknown selector name is an error (exit code 6). Parentheses are not supported.
+
+Hosts can also be generated dynamically by a command via an `[inventory]`
+section in `hosts.toml`. See [docs/inventory.md](docs/inventory.md) for the
+static fields, the dynamic-inventory command, its JSON output format, and how
+static and dynamic hosts merge.
 
 ### State files
 
