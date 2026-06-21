@@ -14,16 +14,15 @@ use std::collections::HashMap;
 pub fn evaluate(expr: &str, facts: &HashMap<String, String>) -> bool {
     let expr = expr.trim();
 
-    // Handle || (OR) first - it binds looser than &&.
-    if expr.contains("||") {
-        return expr.split("||").any(|part| evaluate(part, facts));
+    // Operators are matched only OUTSIDE quotes, so a quoted value containing
+    // `||`, `&&`, `==`, or `!=` (e.g. a version string) is compared literally
+    // rather than mis-parsed as an operator. `||` binds looser than `&&`.
+    if let Some(pos) = find_operator(expr, "||") {
+        return evaluate(&expr[..pos], facts) || evaluate(&expr[pos + 2..], facts);
     }
-    // Then && (AND).
-    if expr.contains("&&") {
-        return expr.split("&&").all(|part| evaluate(part, facts));
+    if let Some(pos) = find_operator(expr, "&&") {
+        return evaluate(&expr[..pos], facts) && evaluate(&expr[pos + 2..], facts);
     }
-
-    let expr = expr.trim();
 
     // Negation: !group.X or !fact.X
     if let Some(rest) = expr.strip_prefix('!') {
@@ -31,14 +30,14 @@ pub fn evaluate(expr: &str, facts: &HashMap<String, String>) -> bool {
     }
 
     // Equality: fact.X == 'val' or fact.X != 'val'
-    if let Some((lhs, rhs)) = expr.split_once("!=") {
-        let key = lhs.trim();
-        let val = rhs.trim().trim_matches('\'').trim_matches('"');
+    if let Some(pos) = find_operator(expr, "!=") {
+        let key = expr[..pos].trim();
+        let val = expr[pos + 2..].trim().trim_matches('\'').trim_matches('"');
         return facts.get(key).map(|v| v.as_str() != val).unwrap_or(false);
     }
-    if let Some((lhs, rhs)) = expr.split_once("==") {
-        let key = lhs.trim();
-        let val = rhs.trim().trim_matches('\'').trim_matches('"');
+    if let Some(pos) = find_operator(expr, "==") {
+        let key = expr[..pos].trim();
+        let val = expr[pos + 2..].trim().trim_matches('\'').trim_matches('"');
         return facts.get(key).map(|v| v.as_str() == val).unwrap_or(false);
     }
 
@@ -48,6 +47,26 @@ pub fn evaluate(expr: &str, facts: &HashMap<String, String>) -> bool {
     }
 
     false
+}
+
+/// Find the first byte index of a two-character operator that appears OUTSIDE
+/// single or double quotes, so operators inside quoted values are ignored.
+fn find_operator(expr: &str, op: &str) -> Option<usize> {
+    let bytes = expr.as_bytes();
+    let op = op.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut i = 0;
+    while i + op.len() <= bytes.len() {
+        match bytes[i] {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            _ if !in_single && !in_double && &bytes[i..i + op.len()] == op => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -116,6 +135,26 @@ mod tests {
         assert!(!evaluate("fact.nonexistent != 'val'", &facts()));
         // Symmetric with a misspelled key.
         assert!(!evaluate("fact.osss != 'Ubuntu'", &facts()));
+    }
+
+    #[test]
+    fn operators_inside_quoted_values_are_literal() {
+        let mut f = facts();
+        f.insert("fact.ver".into(), "4.15.0!=builtin".into());
+        f.insert("fact.combo".into(), "a||b".into());
+        f.insert("fact.both".into(), "x&&y".into());
+
+        // `!=` inside the quoted value must not split the expression.
+        assert!(evaluate("fact.ver == '4.15.0!=builtin'", &f));
+        assert!(!evaluate("fact.ver != '4.15.0!=builtin'", &f));
+        // `||` / `&&` inside the quoted value must not split either.
+        assert!(evaluate("fact.combo == 'a||b'", &f));
+        assert!(!evaluate("fact.combo == 'a'", &f));
+        assert!(evaluate("fact.both == 'x&&y'", &f));
+        // `==` inside a value compared via `!=`.
+        f.insert("fact.eq".into(), "p==q".into());
+        assert!(evaluate("fact.eq == 'p==q'", &f));
+        assert!(!evaluate("fact.eq != 'p==q'", &f));
     }
 
     #[test]
