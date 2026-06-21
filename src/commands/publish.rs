@@ -38,6 +38,13 @@ pub fn run(
     let sel = selector::parse_selector(targets)?;
     let hosts = inventory.filter(&sel)?;
 
+    // No hosts matched (a valid selector over an empty/non-matching set) is
+    // "nothing to publish", not a failure.
+    if hosts.is_empty() {
+        eprintln!("publish: no hosts matched");
+        return Ok(crate::error::exit_codes::SUCCESS);
+    }
+
     std::fs::create_dir_all(dest)?;
 
     let mut published = 0u32;
@@ -47,7 +54,8 @@ pub fn run(
         let mut host = host.clone();
 
         // Inject group membership facts exactly as the engine does (engine.rs:210-213).
-        for g in &host.groups.clone() {
+        // Disjoint field borrows: &host.groups (read) and host.vars (mutate).
+        for g in &host.groups {
             host.vars
                 .entry(format!("group.{g}"))
                 .or_insert_with(|| toml::Value::String("true".into()));
@@ -203,7 +211,7 @@ content = "hello"
     }
 
     #[test]
-    fn publish_skips_failing_host_and_still_writes_others() {
+    fn publish_all_hosts_fail_returns_invalid_config() {
         let project = TempDir::new().unwrap();
         let dest = TempDir::new().unwrap();
 
