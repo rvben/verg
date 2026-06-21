@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -72,25 +72,6 @@ pub fn serve_once(source: &str, report_dir: &Path) -> Result<RunSummary, Error> 
     let timestamp = format!("{}-{nanos:09}", now.format("%Y-%m-%dT%H-%M-%S"));
     write_serve_report(report_dir, &summary, source, &timestamp)?;
     Ok(summary)
-}
-
-/// The filesystem path of the most-recently-written serve report in `report_dir`.
-///
-/// Scans for `*-serve.json` files and returns the one with the lexicographically
-/// largest name (which equals the most recent due to the `%Y-%m-%dT%H-%M-%S`
-/// prefix). Returns `None` if the directory is empty or does not exist.
-pub fn latest_report(report_dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(report_dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.ends_with("-serve.json"))
-                .unwrap_or(false)
-        })
-        .max_by(|a, b| a.file_name().cmp(&b.file_name()))
 }
 
 #[cfg(test)]
