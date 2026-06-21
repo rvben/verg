@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 use crate::inventory::Host;
+use crate::resource_def::ResourceDef;
 use crate::resources::{REGISTER_SENTINEL, REGISTER_SENTINEL_END, ResolvedResource};
 use crate::state::vars;
 use crate::state::{ResourceDecl, StateFile};
@@ -313,12 +314,29 @@ fn extract_facts(host_vars: &HashMap<String, toml::Value>) -> HashMap<String, St
     facts
 }
 
+/// Returns the subset of `all_defs` whose type key appears in at least one resource.
+/// The bundle ships only the defs the agent actually needs.
+pub fn referenced_defs(
+    resources: &[ResolvedResource],
+    all_defs: &HashMap<String, ResourceDef>,
+) -> HashMap<String, ResourceDef> {
+    let used_types: std::collections::HashSet<&str> =
+        resources.iter().map(|r| r.resource_type.as_str()).collect();
+    all_defs
+        .iter()
+        .filter(|(k, _)| used_types.contains(k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bundle {
     pub host: String,
     pub resources: Vec<ResolvedResource>,
     #[serde(default)]
     pub facts: HashMap<String, String>,
+    #[serde(default)]
+    pub resource_defs: HashMap<String, ResourceDef>,
 }
 
 impl Bundle {
@@ -361,6 +379,7 @@ impl Bundle {
             host: host.name.clone(),
             resources,
             facts,
+            resource_defs: HashMap::new(),
         })
     }
 
@@ -762,6 +781,96 @@ template = true
             Some(&toml::Value::String("8080".into())),
             "scalar inline var should be coerced to a string prop, not dropped"
         );
+    }
+
+    #[test]
+    fn referenced_defs_returns_only_used_types() {
+        use crate::resource_def::ResourceDef;
+
+        let lineinfile_def = ResourceDef {
+            description: "manages a line in a file".into(),
+            params: HashMap::new(),
+            check: "true".into(),
+            apply: "true".into(),
+        };
+        let other_def = ResourceDef {
+            description: "other resource".into(),
+            params: HashMap::new(),
+            check: "true".into(),
+            apply: "true".into(),
+        };
+
+        let mut all_defs = HashMap::new();
+        all_defs.insert("lineinfile".into(), lineinfile_def.clone());
+        all_defs.insert("other".into(), other_def.clone());
+
+        let resources = vec![
+            ResolvedResource {
+                resource_type: "lineinfile".into(),
+                name: "hosts-entry".into(),
+                props: HashMap::new(),
+                after: vec![],
+                notify: vec![],
+                when: None,
+                handler: false,
+                register: None,
+                sensitive: false,
+            },
+            ResolvedResource {
+                resource_type: "lineinfile".into(),
+                name: "motd-entry".into(),
+                props: HashMap::new(),
+                after: vec![],
+                notify: vec![],
+                when: None,
+                handler: false,
+                register: None,
+                sensitive: false,
+            },
+        ];
+
+        let result = referenced_defs(&resources, &all_defs);
+
+        assert_eq!(result.len(), 1, "only lineinfile should be in the result");
+        assert!(
+            result.contains_key("lineinfile"),
+            "lineinfile must be present"
+        );
+        assert!(!result.contains_key("other"), "other must not be present");
+        assert_eq!(result["lineinfile"], lineinfile_def);
+    }
+
+    #[test]
+    fn bundle_with_resource_defs_roundtrips_toml() {
+        use crate::resource_def::ResourceDef;
+
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.pkg.nginx]
+name = "nginx"
+state = "present"
+"#,
+        )];
+
+        let mut bundle =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+
+        let custom_def = ResourceDef {
+            description: "a custom resource type".into(),
+            params: HashMap::new(),
+            check: "test -f /opt/myapp/bin/myapp".into(),
+            apply: "install-myapp".into(),
+        };
+        bundle
+            .resource_defs
+            .insert("myapp".into(), custom_def.clone());
+
+        let serialized = bundle.to_toml().unwrap();
+        let deserialized = Bundle::from_toml(&serialized).unwrap();
+
+        assert_eq!(deserialized.resource_defs.len(), 1);
+        assert_eq!(deserialized.resource_defs["myapp"], custom_def);
     }
 
     #[test]

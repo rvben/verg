@@ -646,6 +646,7 @@ mod tests {
             host: host.to_string(),
             resources,
             facts: HashMap::new(),
+            resource_defs: HashMap::new(),
         }
     }
 
@@ -658,6 +659,7 @@ mod tests {
             host: host.to_string(),
             resources,
             facts,
+            resource_defs: HashMap::new(),
         }
     }
 

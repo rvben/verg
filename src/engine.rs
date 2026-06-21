@@ -139,6 +139,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
 
         let inventory_ctx = Arc::new(inventory.to_template_context());
         let state_files = Arc::new(state_files);
+        let resource_defs = Arc::new(resource_defs);
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.parallel));
         let mut join_set = JoinSet::new();
@@ -147,6 +148,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
             let host = host.clone();
             let state_files = Arc::clone(&state_files);
             let inventory_ctx = Arc::clone(&inventory_ctx);
+            let resource_defs = Arc::clone(&resource_defs);
             let transport = self.transport.for_host();
             let sem = semaphore.clone();
             let cancel = cancel.clone();
@@ -216,7 +218,9 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                         address: &host.address,
                         port: host.port,
                     };
-                    let bundle = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
+                    let mut bundle = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
+                    bundle.resource_defs =
+                        crate::bundle::referenced_defs(&bundle.resources, &resource_defs);
                     let result = transport
                         .execute(&conn, &bundle, dry_run, &arch, has_version)
                         .await?;
