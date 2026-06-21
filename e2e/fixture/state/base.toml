@@ -30,3 +30,9 @@ shell = "/bin/sh"
 url = "file:///tmp/repo.git"
 path = "/tmp/app-checkout"
 ref = "main"
+
+# Test: manage a cron job (writes /etc/cron.d/<name>, no daemon required)
+[resource.cron.verg-backup]
+schedule = "0 3 * * *"
+command = "/usr/local/bin/backup.sh"
+user = "root"

@@ -213,6 +213,12 @@ info "  /tmp/app-checkout: cloned"
 docker exec "$CONTAINER_NAME" test -f /tmp/app-checkout/app.txt || fail "git checkout missing seeded file"
 info "  /tmp/app-checkout/app.txt: present"
 
+# Check cron resource (writes /etc/cron.d/<name>)
+docker exec "$CONTAINER_NAME" test -f /etc/cron.d/verg-backup || fail "cron resource did not write /etc/cron.d/verg-backup"
+docker exec "$CONTAINER_NAME" grep -qF '0 3 * * *  root  /usr/local/bin/backup.sh' /etc/cron.d/verg-backup || fail "cron file missing the expected job line"
+docker exec "$CONTAINER_NAME" sh -c 'test "$(stat -c %a /etc/cron.d/verg-backup)" = "644"' || fail "cron file mode is not 0644"
+info "  /etc/cron.d/verg-backup: cron job written with mode 0644"
+
 # Check secret decryption and rendering (age backend)
 if [ "$SECRETS" = 1 ]; then
     docker exec "$CONTAINER_NAME" sh -c 'cat /tmp/verg-token.txt' 2>/dev/null | grep -q '^s3cr3t-token$' || fail "secret not decrypted/rendered onto target"
