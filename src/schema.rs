@@ -344,8 +344,8 @@ mod tests {
         ResourceDef {
             description: "Insert or remove a line in a file".to_string(),
             params,
-            check: "grep -qF '{{ line }}' '{{ path }}'".to_string(),
-            apply: "echo '{{ line }}' >> '{{ path }}'".to_string(),
+            check: "grep -qF -- \"$VERG_PARAM_line\" \"$VERG_PARAM_path\"".to_string(),
+            apply: "printf '%s\\n' \"$VERG_PARAM_line\" >> \"$VERG_PARAM_path\"".to_string(),
         }
     }
 
