@@ -82,7 +82,14 @@ pub fn write_log(base_dir: &Path, summaries: &[RunSummary]) -> Result<(), Error>
     std::fs::create_dir_all(&log_dir)
         .map_err(|e| Error::Other(format!("failed to create log dir: {e}")))?;
 
-    let timestamp = Utc::now().format("%Y-%m-%dT%H-%M-%S");
+    // Sub-second resolution so two apply runs finishing in the same second do
+    // not produce the same filename and silently overwrite each other's log.
+    let now = Utc::now();
+    let timestamp = format!(
+        "{}-{:09}",
+        now.format("%Y-%m-%dT%H-%M-%S"),
+        now.timestamp_subsec_nanos()
+    );
     let filename = format!("{timestamp}-apply.json");
     let path = log_dir.join(filename);
 
