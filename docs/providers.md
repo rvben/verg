@@ -17,7 +17,7 @@ Because the source script is **embedded into the bundle at build time** on the c
 
 ## Declaring a Provider
 
-Place one or more `.toml` files in `verg/providers/`. Each file can contain one or more provider definitions:
+Place one or more `.toml` files in `verg/providers/`. Each file can contain one or more provider definitions. A missing `verg/providers/` directory is fine - no providers are loaded, which is not an error.
 
 ```toml
 [provider.<type>]
@@ -102,7 +102,7 @@ verg writes exactly one JSON object to the script's stdin:
 | `action` | string | `"plan"` during dry-run (`verg diff`/`verg check`); `"apply"` during `verg apply` |
 | `type` | string | The provider type name (matches `[provider.<type>]`) |
 | `name` | string | The resource instance name (from `[resource.<type>.<name>]`) |
-| `params` | object | All resolved param values; keys are param names, values are JSON scalars |
+| `params` | object | Resolved param values: instance values take precedence, and params with a declared `default` that the instance omits are sent with their default value; params with no instance value and no default are absent |
 
 ### Response
 
@@ -203,19 +203,19 @@ path=$(printf '%s' "$req" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\
 
 if [ "$action" = "plan" ]; then
     if [ -f "$path" ]; then
-        printf '{"status":"ok"}'
+        printf '%s' '{"status":"ok"}'
     else
-        printf '{"status":"changed","diff":"would create %s"}' "$path"
+        printf '%s' '{"status":"changed","diff":"would create '"$path"'"}'
     fi
 elif [ "$action" = "apply" ]; then
     if [ -f "$path" ]; then
-        printf '{"status":"ok"}'
+        printf '%s' '{"status":"ok"}'
     else
         touch "$path"
-        printf '{"status":"changed","diff":"created %s"}' "$path"
+        printf '%s' '{"status":"changed","diff":"created '"$path"'"}'
     fi
 else
-    printf '{"status":"failed","error":"unknown action: %s"}' "$action"
+    printf '%s' '{"status":"failed","error":"unknown action: '"$action"'"}'
 fi
 ```
 

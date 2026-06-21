@@ -110,6 +110,26 @@ struct ProviderResponse {
     error: Option<String>,
 }
 
+/// Build an effective props map by merging instance props with declared defaults.
+///
+/// For each param declared in the def:
+///   - Use the instance prop if present (instance value wins).
+///   - Fall back to the param's declared default if the instance omits the param.
+///   - If neither exists, the param is absent from the request.
+///
+/// This mirrors the semantics of `custom.rs` `build_env`.
+fn effective_props(resource: &ResolvedResource, def: &ProviderDef) -> HashMap<String, toml::Value> {
+    let mut props = resource.props.clone();
+    for (param_name, param_spec) in &def.params {
+        if !props.contains_key(param_name)
+            && let Some(default_val) = &param_spec.default
+        {
+            props.insert(param_name.clone(), default_val.clone());
+        }
+    }
+    props
+}
+
 /// Execute a native provider resource over the JSON-over-stdio protocol.
 ///
 /// The provider receives `{protocol_version, action, type, name, params}` on
@@ -126,7 +146,7 @@ pub fn execute(
     let name = &resource.name;
     let action = if dry_run { "plan" } else { "apply" };
 
-    let params = props_to_json(&resource.props);
+    let params = props_to_json(&effective_props(resource, def));
     let request = serde_json::json!({
         "protocol_version": PROTOCOL_VERSION,
         "action": action,
@@ -216,6 +236,7 @@ mod tests {
 
     use super::*;
     use crate::provider_def::ProviderDef;
+    use crate::resource_def::ParamSpec;
     use crate::resources::{ResolvedResource, ResourceStatus};
 
     fn resource(props: HashMap<String, toml::Value>) -> ResolvedResource {
@@ -380,6 +401,91 @@ mod tests {
                     .count()
             })
             .unwrap_or(0)
+    }
+
+    fn sh_provider_with_params(source: &str, params: HashMap<String, ParamSpec>) -> ProviderDef {
+        ProviderDef {
+            description: String::new(),
+            interpreter: vec!["/bin/sh".into()],
+            source: source.into(),
+            params,
+        }
+    }
+
+    #[test]
+    fn declared_default_is_sent_when_instance_omits_param() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir
+            .path()
+            .join("request.json")
+            .to_string_lossy()
+            .into_owned();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "color".to_string(),
+            ParamSpec {
+                param_type: "string".into(),
+                required: false,
+                default: Some(toml::Value::String("def-val".into())),
+                enum_values: None,
+            },
+        );
+        let def = sh_provider_with_params(
+            &format!("cat > '{out}'\nprintf '%s' '{{\"status\":\"ok\"}}'"),
+            params,
+        );
+
+        // Instance provides NO "color" prop - the default must fill it in.
+        let r = execute(&resource(HashMap::new()), &def, false).unwrap();
+        assert_eq!(r.status, ResourceStatus::Ok);
+
+        let req = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            req.contains("def-val"),
+            "declared default must appear in request params when instance omits the param: {req}"
+        );
+    }
+
+    #[test]
+    fn instance_value_wins_over_declared_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir
+            .path()
+            .join("request.json")
+            .to_string_lossy()
+            .into_owned();
+
+        let mut params = HashMap::new();
+        params.insert(
+            "color".to_string(),
+            ParamSpec {
+                param_type: "string".into(),
+                required: false,
+                default: Some(toml::Value::String("def-val".into())),
+                enum_values: None,
+            },
+        );
+        let def = sh_provider_with_params(
+            &format!("cat > '{out}'\nprintf '%s' '{{\"status\":\"ok\"}}'"),
+            params,
+        );
+
+        // Instance explicitly sets "color" - it must override the default.
+        let mut props = HashMap::new();
+        props.insert("color".to_string(), toml::Value::String("red".into()));
+        let r = execute(&resource(props), &def, false).unwrap();
+        assert_eq!(r.status, ResourceStatus::Ok);
+
+        let req = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            req.contains("red"),
+            "instance value must appear in request params: {req}"
+        );
+        assert!(
+            !req.contains("def-val"),
+            "default must not override instance value: {req}"
+        );
     }
 
     #[test]
