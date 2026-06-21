@@ -268,7 +268,13 @@ async fn run(
                 &base_dir.join("resources"),
                 verg::config::known_resource_types(),
             )?;
-            verg::schema::run(&custom_defs);
+            let provider_defs = verg::provider_def::load_provider_defs(
+                &base_dir.join("providers"),
+                &base_dir,
+                verg::config::known_resource_types(),
+                &custom_defs,
+            )?;
+            verg::schema::run(&custom_defs, &provider_defs);
             Ok(0)
         }
         Command::Init { force } => {

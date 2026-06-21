@@ -104,7 +104,18 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
             &base_dir.join("resources"),
             crate::config::known_resource_types(),
         )?;
-        crate::config::validate_state_files(&state_files, self.policy, &resource_defs)?;
+        let provider_defs = crate::provider_def::load_provider_defs(
+            &base_dir.join("providers"),
+            base_dir,
+            crate::config::known_resource_types(),
+            &resource_defs,
+        )?;
+        crate::config::validate_state_files(
+            &state_files,
+            self.policy,
+            &resource_defs,
+            &provider_defs,
+        )?;
         if state_dir.is_dir() {
             let mut entries: Vec<_> = std::fs::read_dir(&state_dir)
                 .map_err(|e| Error::Config(format!("failed to read {}: {e}", state_dir.display())))?
@@ -144,6 +155,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
         let inventory_ctx = Arc::new(ctx);
         let state_files = Arc::new(state_files);
         let resource_defs = Arc::new(resource_defs);
+        let provider_defs = Arc::new(provider_defs);
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.parallel));
         let mut join_set = JoinSet::new();
@@ -153,6 +165,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
             let state_files = Arc::clone(&state_files);
             let inventory_ctx = Arc::clone(&inventory_ctx);
             let resource_defs = Arc::clone(&resource_defs);
+            let provider_defs = Arc::clone(&provider_defs);
             let transport = self.transport.for_host();
             let sem = semaphore.clone();
             let cancel = cancel.clone();
@@ -225,6 +238,8 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                     let mut bundle = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
                     bundle.resource_defs =
                         crate::bundle::referenced_defs(&bundle.resources, &resource_defs);
+                    bundle.provider_defs =
+                        crate::bundle::referenced_provider_defs(&bundle.resources, &provider_defs);
                     let result = transport
                         .execute(&conn, &bundle, dry_run, &arch, has_version)
                         .await?;

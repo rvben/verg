@@ -33,10 +33,16 @@ pub fn run(
         &base_dir.join("resources"),
         crate::config::known_resource_types(),
     )?;
+    let provider_defs = crate::provider_def::load_provider_defs(
+        &base_dir.join("providers"),
+        base_dir,
+        crate::config::known_resource_types(),
+        &resource_defs,
+    )?;
 
     // Validate the entire project before writing any output so a bad config
     // fails loudly on the control host rather than producing partial output.
-    crate::config::validate_state_files(&state_files, policy, &resource_defs)?;
+    crate::config::validate_state_files(&state_files, policy, &resource_defs, &provider_defs)?;
 
     let sel = selector::parse_selector(targets)?;
     let hosts = inventory.filter(&sel)?;
@@ -68,6 +74,8 @@ pub fn run(
             Ok(mut bundle) => {
                 bundle.resource_defs =
                     crate::bundle::referenced_defs(&bundle.resources, &resource_defs);
+                bundle.provider_defs =
+                    crate::bundle::referenced_provider_defs(&bundle.resources, &provider_defs);
                 match bundle.to_toml() {
                     Ok(toml_str) => {
                         let out_path = dest.join(format!("{}.toml", host.name));

@@ -359,10 +359,13 @@ impl Bundle {
     /// `base_dir` is the verg project directory (used to resolve `source` file paths).
     /// `inventory_ctx` exposes `inventory.hosts` and `inventory.groups` to templates.
     ///
-    /// NOTE: this leaves `resource_defs` EMPTY. A caller that uses custom resource
-    /// types MUST populate it before transmitting the bundle to the agent, e.g.
+    /// NOTE: this leaves `resource_defs` and `provider_defs` EMPTY. A caller that
+    /// uses custom resource types MUST populate `resource_defs` before transmitting
+    /// the bundle to the agent, e.g.
     /// `bundle.resource_defs = referenced_defs(&bundle.resources, &all_defs);`.
-    /// Without that step the agent rejects any custom type as "unknown resource type".
+    /// A caller that uses native provider types MUST likewise set
+    /// `bundle.provider_defs = referenced_provider_defs(&bundle.resources, &all_provider_defs);`.
+    /// Without these steps the agent rejects any custom or provider type as "unknown resource type".
     pub fn build(
         host: &Host,
         state_files: &[StateFile],

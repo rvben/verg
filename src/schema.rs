@@ -4,7 +4,10 @@ use serde_json::{Value, json};
 
 use crate::resource_def::ResourceDef;
 
-pub fn run(custom_defs: &HashMap<String, ResourceDef>) {
+pub fn run(
+    custom_defs: &HashMap<String, ResourceDef>,
+    provider_defs: &HashMap<String, crate::provider_def::ProviderDef>,
+) {
     let schema = json!({
         "clispec": "0.2",
         "name": "verg",
@@ -113,12 +116,15 @@ pub fn run(custom_defs: &HashMap<String, ResourceDef>) {
             "vars": {"type": "object", "description": "Resource-scoped variable overrides"},
             "sensitive": {"type": "boolean", "default": false, "description": "Redact this resource's diff/from/to/output from output and the changelog"}
         },
-        "resource_types": build_resource_types(custom_defs),
+        "resource_types": build_resource_types(custom_defs, provider_defs),
     });
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
 }
 
-fn build_resource_types(custom_defs: &HashMap<String, ResourceDef>) -> Value {
+fn build_resource_types(
+    custom_defs: &HashMap<String, ResourceDef>,
+    provider_defs: &HashMap<String, crate::provider_def::ProviderDef>,
+) -> Value {
     let mut types = resource_schemas();
     let map = types
         .as_object_mut()
@@ -142,6 +148,29 @@ fn build_resource_types(custom_defs: &HashMap<String, ResourceDef>) -> Value {
         let entry = json!({
             "description": def.description,
             "custom": true,
+            "properties": Value::Object(properties),
+        });
+        map.insert(type_name.clone(), entry);
+    }
+
+    for (type_name, def) in provider_defs {
+        let mut properties = serde_json::Map::new();
+        for (param_name, param) in &def.params {
+            let mut prop = serde_json::Map::new();
+            prop.insert("type".to_string(), json!(param.param_type));
+            prop.insert("required".to_string(), json!(param.required));
+            if let Some(default) = &param.default {
+                let default_json = toml_value_to_json(default);
+                prop.insert("default".to_string(), default_json);
+            }
+            if let Some(enum_values) = &param.enum_values {
+                prop.insert("enum".to_string(), json!(enum_values));
+            }
+            properties.insert(param_name.clone(), Value::Object(prop));
+        }
+        let entry = json!({
+            "description": def.description,
+            "provider": true,
             "properties": Value::Object(properties),
         });
         map.insert(type_name.clone(), entry);
@@ -394,7 +423,7 @@ mod tests {
         let mut defs = HashMap::new();
         defs.insert("lineinfile".to_string(), lineinfile_def());
 
-        let types = build_resource_types(&defs);
+        let types = build_resource_types(&defs, &HashMap::new());
         let obj = types.as_object().unwrap();
 
         // Custom type is present.
@@ -446,7 +475,7 @@ mod tests {
     #[test]
     fn builtin_types_have_no_custom_marker() {
         let defs = HashMap::new();
-        let types = build_resource_types(&defs);
+        let types = build_resource_types(&defs, &HashMap::new());
         let obj = types.as_object().unwrap();
 
         for builtin in &["pkg", "file", "service", "cmd", "user", "sysctl", "cron"] {
@@ -460,10 +489,10 @@ mod tests {
 
     #[test]
     fn empty_custom_defs_leaves_schema_unchanged() {
-        let without_custom = build_resource_types(&HashMap::new());
+        let without_custom = build_resource_types(&HashMap::new(), &HashMap::new());
         let with_custom = {
             let defs = HashMap::new();
-            build_resource_types(&defs)
+            build_resource_types(&defs, &HashMap::new())
         };
         assert_eq!(
             without_custom, with_custom,
@@ -561,6 +590,27 @@ mod tests {
         );
         assert_eq!(common["sensitive"]["type"], "boolean");
         assert_eq!(common["sensitive"]["default"], false);
+    }
+
+    #[test]
+    fn provider_types_appear_in_schema() {
+        use crate::provider_def::ProviderDef;
+        let mut providers = HashMap::new();
+        providers.insert(
+            "dns_record".to_string(),
+            ProviderDef {
+                description: "DNS".into(),
+                interpreter: vec!["python3".into()],
+                source: "x".into(),
+                params: HashMap::new(),
+            },
+        );
+        let value = build_resource_types(&HashMap::new(), &providers);
+        let obj = value.as_object().expect("object");
+        assert!(
+            obj.contains_key("dns_record"),
+            "provider type must be in schema"
+        );
     }
 
     #[test]

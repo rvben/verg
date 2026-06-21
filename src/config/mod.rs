@@ -8,14 +8,89 @@ use crate::error::Error;
 use crate::resource_def::ResourceDef;
 use crate::state::StateFile;
 
+/// Validate prop names, required params, types, and enum constraints for a
+/// custom or native provider resource instance. Shared by the custom-def and
+/// provider-def branches of `validate_state_files`.
+fn validate_param_props(
+    policy: ConfigPolicy,
+    fqn: &str,
+    props: &toml::map::Map<String, toml::Value>,
+    params: &HashMap<String, crate::resource_def::ParamSpec>,
+) -> Result<(), Error> {
+    let mut allowed: Vec<&str> = COMMON_FIELDS.to_vec();
+    for param_name in params.keys() {
+        allowed.push(param_name.as_str());
+    }
+
+    for (key, value) in props {
+        if !allowed.contains(&key.as_str()) {
+            report(
+                policy,
+                format!(
+                    "{fqn}: unknown property '{key}'. Allowed: {}",
+                    allowed.join(", ")
+                ),
+            )?;
+        }
+        check_special_key_type(policy, fqn, key, value)?;
+    }
+
+    for (param_name, param_spec) in params {
+        if param_spec.required && !props.contains_key(param_name.as_str()) {
+            report(
+                policy,
+                format!("{fqn}: missing required param '{param_name}'"),
+            )?;
+        }
+    }
+
+    for (param_name, param_spec) in params {
+        if let Some(value) = props.get(param_name.as_str()) {
+            let type_ok = matches!(
+                (param_spec.param_type.as_str(), value),
+                ("string", toml::Value::String(_))
+                    | ("integer", toml::Value::Integer(_))
+                    | ("float", toml::Value::Float(_))
+                    | ("boolean", toml::Value::Boolean(_))
+            );
+            if !type_ok {
+                report(
+                    policy,
+                    format!(
+                        "{fqn}: param '{param_name}' must be a {} value",
+                        param_spec.param_type
+                    ),
+                )?;
+                continue;
+            }
+            if param_spec.param_type == "string"
+                && let Some(enum_values) = &param_spec.enum_values
+                && let toml::Value::String(s) = value
+                && !enum_values.contains(s)
+            {
+                report(
+                    policy,
+                    format!(
+                        "{fqn}: param '{param_name}' value '{s}' is not in allowed values: {}",
+                        enum_values.join(", ")
+                    ),
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validate resource types, prop names, and special-key types across all state
 /// files. Strict mode errors on the first violation; lax mode warns and continues.
-/// Custom resource definitions in `custom_defs` extend the set of accepted types
-/// and are validated against their param schemas.
+/// Custom resource definitions in `custom_defs` and native provider definitions
+/// in `provider_defs` extend the set of accepted types and are validated against
+/// their param schemas.
 pub fn validate_state_files(
     files: &[StateFile],
     policy: ConfigPolicy,
     custom_defs: &HashMap<String, ResourceDef>,
+    provider_defs: &HashMap<String, crate::provider_def::ProviderDef>,
 ) -> Result<(), Error> {
     for sf in files {
         for decl in sf.resources()? {
@@ -23,8 +98,9 @@ pub fn validate_state_files(
 
             let is_builtin = known_resource_types().contains(&decl.resource_type.as_str());
             let custom_def = custom_defs.get(&decl.resource_type);
+            let provider_def = provider_defs.get(&decl.resource_type);
 
-            if !is_builtin && custom_def.is_none() {
+            if !is_builtin && custom_def.is_none() && provider_def.is_none() {
                 report(
                     policy,
                     format!(
@@ -41,7 +117,6 @@ pub fn validate_state_files(
                 // Built-in types keep their exact existing code path.
                 let allowed = allowed_fields(&decl.resource_type)
                     .expect("known type must have an allowed-field list");
-
                 for (key, value) in &decl.props {
                     if !allowed.contains(&key.as_str()) {
                         report(
@@ -54,79 +129,11 @@ pub fn validate_state_files(
                     }
                     check_special_key_type(policy, &fqn, key, value)?;
                 }
+            } else if let Some(def) = custom_def {
+                validate_param_props(policy, &fqn, &decl.props, &def.params)?;
             } else {
-                // Custom type: validate against the def's param schema.
-                let def = custom_def.expect("custom_def is Some when !is_builtin");
-
-                // Build the allowed-key set: common fields + param names.
-                let mut allowed: Vec<&str> = COMMON_FIELDS.to_vec();
-                for param_name in def.params.keys() {
-                    allowed.push(param_name.as_str());
-                }
-
-                // Unknown-key and special-key checks (same behaviour as built-in).
-                for (key, value) in &decl.props {
-                    if !allowed.contains(&key.as_str()) {
-                        report(
-                            policy,
-                            format!(
-                                "{fqn}: unknown property '{key}'. Allowed: {}",
-                                allowed.join(", ")
-                            ),
-                        )?;
-                    }
-                    check_special_key_type(policy, &fqn, key, value)?;
-                }
-
-                // Required-param check.
-                for (param_name, param_spec) in &def.params {
-                    if param_spec.required && !decl.props.contains_key(param_name.as_str()) {
-                        report(
-                            policy,
-                            format!("{fqn}: missing required param '{param_name}'"),
-                        )?;
-                    }
-                }
-
-                // Per-param type and enum checks for values that are present.
-                for (param_name, param_spec) in &def.params {
-                    if let Some(value) = decl.props.get(param_name.as_str()) {
-                        // Type check.
-                        let type_ok = matches!(
-                            (param_spec.param_type.as_str(), value),
-                            ("string", toml::Value::String(_))
-                                | ("integer", toml::Value::Integer(_))
-                                | ("float", toml::Value::Float(_))
-                                | ("boolean", toml::Value::Boolean(_))
-                        );
-                        if !type_ok {
-                            report(
-                                policy,
-                                format!(
-                                    "{fqn}: param '{param_name}' must be a {} value",
-                                    param_spec.param_type
-                                ),
-                            )?;
-                            // Skip enum check when the type is already wrong.
-                            continue;
-                        }
-
-                        // Enum check for string params with an enum constraint.
-                        if param_spec.param_type == "string"
-                            && let Some(enum_values) = &param_spec.enum_values
-                            && let toml::Value::String(s) = value
-                            && !enum_values.contains(s)
-                        {
-                            report(
-                                policy,
-                                format!(
-                                    "{fqn}: param '{param_name}' value '{s}' is not in allowed values: {}",
-                                    enum_values.join(", ")
-                                ),
-                            )?;
-                        }
-                    }
-                }
+                let def = provider_def.expect("provider_def is Some here");
+                validate_param_props(policy, &fqn, &decl.props, &def.params)?;
             }
         }
     }
@@ -377,7 +384,7 @@ mod tests {
             "[resource.lineinfile.hosts_entry]\npath = \"/etc/hosts\"\nline = \"127.0.0.2 foo\"\nstate = \"present\"\n",
         );
         let defs = lineinfile_defs();
-        validate_state_files(&[f], ConfigPolicy::strict(), &defs)
+        validate_state_files(&[f], ConfigPolicy::strict(), &defs, &HashMap::new())
             .expect("valid custom resource should pass");
     }
 
@@ -386,7 +393,8 @@ mod tests {
         // `path` is required but omitted.
         let f = parse("[resource.lineinfile.hosts_entry]\nline = \"127.0.0.2 foo\"\n");
         let defs = lineinfile_defs();
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &defs).unwrap_err();
+        let err =
+            validate_state_files(&[f], ConfigPolicy::strict(), &defs, &HashMap::new()).unwrap_err();
         assert!(
             err.to_string().contains("path"),
             "error should mention missing param 'path', got: {err}"
@@ -400,7 +408,8 @@ mod tests {
             "[resource.lineinfile.hosts_entry]\npath = \"/etc/hosts\"\nline = \"127.0.0.2 foo\"\ntypo_key = \"bad\"\n",
         );
         let defs = lineinfile_defs();
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &defs).unwrap_err();
+        let err =
+            validate_state_files(&[f], ConfigPolicy::strict(), &defs, &HashMap::new()).unwrap_err();
         assert!(
             err.to_string().contains("typo_key"),
             "error should mention unknown key 'typo_key', got: {err}"
@@ -414,7 +423,8 @@ mod tests {
             "[resource.lineinfile.hosts_entry]\npath = \"/etc/hosts\"\nline = \"127.0.0.2 foo\"\nstate = \"gone\"\n",
         );
         let defs = lineinfile_defs();
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &defs).unwrap_err();
+        let err =
+            validate_state_files(&[f], ConfigPolicy::strict(), &defs, &HashMap::new()).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("gone") && msg.contains("state"),
@@ -427,7 +437,8 @@ mod tests {
         // `path` is declared string but given an integer.
         let f = parse("[resource.lineinfile.hosts_entry]\npath = 42\nline = \"127.0.0.2 foo\"\n");
         let defs = lineinfile_defs();
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &defs).unwrap_err();
+        let err =
+            validate_state_files(&[f], ConfigPolicy::strict(), &defs, &HashMap::new()).unwrap_err();
         assert!(
             err.to_string().contains("path"),
             "error should mention wrong-typed param 'path', got: {err}"
@@ -439,7 +450,8 @@ mod tests {
         // `frobble` is neither a built-in nor in the defs map.
         let f = parse("[resource.frobble.x]\nname = \"x\"\n");
         let defs = lineinfile_defs();
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &defs).unwrap_err();
+        let err =
+            validate_state_files(&[f], ConfigPolicy::strict(), &defs, &HashMap::new()).unwrap_err();
         assert!(
             err.to_string().contains("frobble"),
             "error should mention unknown type 'frobble', got: {err}"
@@ -454,7 +466,7 @@ mod tests {
         );
         let defs = lineinfile_defs();
         assert!(
-            validate_state_files(&[f], ConfigPolicy::lax(), &defs).is_ok(),
+            validate_state_files(&[f], ConfigPolicy::lax(), &defs, &HashMap::new()).is_ok(),
             "lax mode should downgrade all custom validation errors to warnings"
         );
     }
@@ -462,14 +474,26 @@ mod tests {
     #[test]
     fn unknown_resource_type_is_rejected() {
         let f = parse("[resource.serrvice.nginx]\nname = \"nginx\"\n");
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new()).unwrap_err();
+        let err = validate_state_files(
+            &[f],
+            ConfigPolicy::strict(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("serrvice"), "got: {err}");
     }
 
     #[test]
     fn misspelled_prop_is_rejected() {
         let f = parse("[resource.file.conf]\npath = \"/etc/x\"\nmod = \"0644\"\n");
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new()).unwrap_err();
+        let err = validate_state_files(
+            &[f],
+            ConfigPolicy::strict(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("mod"), "got: {err}");
         assert!(err.to_string().contains("file.conf"), "got: {err}");
     }
@@ -479,28 +503,49 @@ mod tests {
         // `source` is a file-only build input; on pkg it would be silently
         // ignored, so it must be rejected.
         let f = parse("[resource.pkg.nginx]\nname = \"nginx\"\nsource = \"files/x\"\n");
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new()).unwrap_err();
+        let err = validate_state_files(
+            &[f],
+            ConfigPolicy::strict(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("source"), "got: {err}");
     }
 
     #[test]
     fn wrong_typed_when_is_rejected() {
         let f = parse("[resource.service.nginx]\nname = \"nginx\"\nwhen = 1\n");
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new()).unwrap_err();
+        let err = validate_state_files(
+            &[f],
+            ConfigPolicy::strict(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("when"), "got: {err}");
     }
 
     #[test]
     fn wrong_typed_after_item_is_rejected() {
         let f = parse("[resource.service.nginx]\nname = \"nginx\"\nafter = [42]\n");
-        let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new()).unwrap_err();
+        let err = validate_state_files(
+            &[f],
+            ConfigPolicy::strict(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("after"), "got: {err}");
     }
 
     #[test]
     fn lax_mode_allows_unknown_prop() {
         let f = parse("[resource.file.conf]\npath = \"/etc/x\"\nmod = \"0644\"\n");
-        assert!(validate_state_files(&[f], ConfigPolicy::lax(), &HashMap::new()).is_ok());
+        assert!(
+            validate_state_files(&[f], ConfigPolicy::lax(), &HashMap::new(), &HashMap::new())
+                .is_ok()
+        );
     }
 
     #[test]
@@ -508,7 +553,15 @@ mod tests {
         let f = parse(
             "[resource.file.conf]\npath = \"/etc/x\"\nmode = \"0644\"\nwhen = \"group.web\"\nafter = [\"pkg.nginx\"]\n",
         );
-        assert!(validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new()).is_ok());
+        assert!(
+            validate_state_files(
+                &[f],
+                ConfigPolicy::strict(),
+                &HashMap::new(),
+                &HashMap::new()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -576,5 +629,72 @@ mod tests {
     fn typoed_targets_warns_in_lax() {
         let raw = "targetss = [\"web\"]\n";
         assert!(validate_state_file_toml(raw, "web.toml", ConfigPolicy::lax()).is_ok());
+    }
+
+    #[test]
+    fn provider_type_is_accepted_with_valid_params() {
+        use crate::provider_def::ProviderDef;
+        let f = parse(
+            r#"
+[resource.dns_record.www]
+zone = "example.com"
+"#,
+        );
+        let mut providers = HashMap::new();
+        let mut params = HashMap::new();
+        params.insert(
+            "zone".to_string(),
+            crate::resource_def::ParamSpec {
+                param_type: "string".into(),
+                required: true,
+                default: None,
+                enum_values: None,
+            },
+        );
+        providers.insert(
+            "dns_record".to_string(),
+            ProviderDef {
+                description: String::new(),
+                interpreter: vec!["python3".into()],
+                source: "x".into(),
+                params,
+            },
+        );
+        assert!(
+            validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new(), &providers).is_ok()
+        );
+    }
+
+    #[test]
+    fn provider_missing_required_param_is_error() {
+        use crate::provider_def::ProviderDef;
+        let f = parse(
+            r#"
+[resource.dns_record.www]
+"#,
+        );
+        let mut providers = HashMap::new();
+        let mut params = HashMap::new();
+        params.insert(
+            "zone".to_string(),
+            crate::resource_def::ParamSpec {
+                param_type: "string".into(),
+                required: true,
+                default: None,
+                enum_values: None,
+            },
+        );
+        providers.insert(
+            "dns_record".to_string(),
+            ProviderDef {
+                description: String::new(),
+                interpreter: vec!["python3".into()],
+                source: "x".into(),
+                params,
+            },
+        );
+        let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new(), &providers)
+            .unwrap_err();
+        assert!(err.to_string().contains("zone"), "got: {err}");
     }
 }
