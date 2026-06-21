@@ -8,10 +8,12 @@ pub mod directory;
 pub mod docker_compose;
 pub mod download;
 pub mod file;
+pub mod hostname;
 pub mod pkg;
 pub mod service;
 pub mod sysctl;
 pub mod tempdir;
+pub mod timezone;
 pub mod user;
 pub mod when;
 
@@ -253,8 +255,10 @@ pub fn execute_resource(
         "download" => download::execute(resource, dry_run),
         "pkg" => pkg::execute(resource, dry_run),
         "file" => file::execute(resource, dry_run),
+        "hostname" => hostname::execute(resource, dry_run),
         "service" => service::execute(resource, dry_run),
         "sysctl" => sysctl::execute(resource, dry_run),
+        "timezone" => timezone::execute(resource, dry_run),
         "cmd" => cmd::execute(resource, dry_run, notified),
         "cron" => cron::execute(resource, dry_run),
         "user" => user::execute(resource, dry_run),

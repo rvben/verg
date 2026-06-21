@@ -228,6 +228,13 @@ fn resource_schemas() -> Value {
             },
             "required": ["path"],
         },
+        "hostname": {
+            "description": "Set the static system hostname",
+            "properties": {
+                "hostname": {"type": "string", "description": "Desired static hostname"},
+            },
+            "required": ["hostname"],
+        },
         "service": {
             "description": "Manage systemd services",
             "properties": {
@@ -256,6 +263,13 @@ fn resource_schemas() -> Value {
                 "persist": {"type": "boolean", "description": "Write to /etc/sysctl.d/99-verg.conf for persistence across reboots", "default": false},
             },
             "required": ["key", "value"],
+        },
+        "timezone": {
+            "description": "Set the system timezone (IANA tz database name)",
+            "properties": {
+                "timezone": {"type": "string", "description": "IANA timezone name (e.g. 'Europe/Amsterdam')"},
+            },
+            "required": ["timezone"],
         },
         "cmd": {
             "description": "Run a command (requires idempotency guard, or register)",
@@ -442,10 +456,12 @@ mod tests {
         let obj = schemas.as_object().unwrap();
         assert!(obj.contains_key("pkg"));
         assert!(obj.contains_key("file"));
+        assert!(obj.contains_key("hostname"));
         assert!(obj.contains_key("service"));
         assert!(obj.contains_key("cmd"));
         assert!(obj.contains_key("user"));
         assert!(obj.contains_key("sysctl"));
+        assert!(obj.contains_key("timezone"));
         assert!(obj.contains_key("cron"));
     }
 
