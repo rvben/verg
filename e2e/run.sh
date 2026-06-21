@@ -112,6 +112,24 @@ fi
 echo "$DIFF_OUTPUT" | python3 -m json.tool > /dev/null 2>&1 || fail "diff output is not valid JSON: $DIFF_OUTPUT"
 info "  diff returned valid JSON (exit $DIFF_EXIT)"
 
+# --- Seed bare git repo ---
+
+info "Seeding bare git repo in container..."
+docker exec "$CONTAINER_NAME" sh -c '
+  set -e
+  git init --bare /tmp/repo.git
+  git clone /tmp/repo.git /tmp/repo-work
+  cd /tmp/repo-work
+  git config user.email ci@example.com
+  git config user.name CI
+  echo "hello from verg" > app.txt
+  git add app.txt
+  git commit -m seed
+  git branch -M main
+  git push origin main
+' || fail "failed to seed bare git repo"
+info "  seeded bare git repo at /tmp/repo.git (branch main)"
+
 # --- Test 2: apply ---
 
 info "Test 2: verg apply..."
@@ -151,6 +169,22 @@ info "  /tmp/verg-marker: exists"
 # Check custom lineinfile resource
 ssh -F "$SSH_CONFIG" verg-e2e "grep -qxF 'Managed by verg' /tmp/verg-motd" || fail "lineinfile custom resource not applied"
 info "  /tmp/verg-motd: lineinfile applied"
+
+# Check user created
+docker exec "$CONTAINER_NAME" getent passwd appuser >/dev/null 2>&1 || fail "user appuser not created"
+info "  appuser: present"
+
+# Check user shell
+docker exec "$CONTAINER_NAME" sh -c 'getent passwd appuser | grep -q ":/bin/sh$"' || fail "user appuser shell not /bin/sh"
+info "  appuser: shell is /bin/sh"
+
+# Check git clone
+docker exec "$CONTAINER_NAME" test -d /tmp/app-checkout/.git || fail "git resource did not clone"
+info "  /tmp/app-checkout: cloned"
+
+# Check seeded file is present in checkout
+docker exec "$CONTAINER_NAME" test -f /tmp/app-checkout/app.txt || fail "git checkout missing seeded file"
+info "  /tmp/app-checkout/app.txt: present"
 
 # --- Test 4: idempotency ---
 

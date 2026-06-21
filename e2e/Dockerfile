@@ -6,7 +6,8 @@ RUN apt-get update && apt-get install -y \
     openssh-server \
     systemd \
     systemd-sysv \
-    curl
+    curl \
+    git
 
 # Configure sshd
 RUN mkdir -p /run/sshd && \

@@ -18,3 +18,15 @@ creates = "/tmp/verg-marker"
 [resource.lineinfile.banner]
 path = "/tmp/verg-motd"
 line = "Managed by verg"
+
+# Test: create a local user with a specific shell
+[resource.user.appuser]
+name = "appuser"
+state = "present"
+shell = "/bin/sh"
+
+# Test: clone a git repository
+[resource.git.app]
+url = "file:///tmp/repo.git"
+path = "/tmp/app-checkout"
+ref = "main"
