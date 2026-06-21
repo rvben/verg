@@ -47,6 +47,25 @@ pub fn read_bounded<R: std::io::Read>(reader: R, max: usize) -> Result<String, E
     String::from_utf8(buf).map_err(|e| Error::Parse(format!("input is not valid UTF-8: {e}")))
 }
 
+/// Read a file's current contents for drift comparison.
+///
+/// Returns `Ok(None)` when the file does not exist, `Ok(Some(text))` when it
+/// exists and is readable, and `Err` for any OTHER I/O error. This is the
+/// correct contract for "read current state then decide whether to rewrite": a
+/// transient read failure (permissions, I/O error, the path being a directory)
+/// must NOT be silently treated as "absent", which would clobber a file whose
+/// real contents could not be read.
+pub fn read_current(path: &std::path::Path) -> Result<Option<String>, Error> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Ok(Some(s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(Error::Resource(format!(
+            "failed to read {}: {e}",
+            path.display()
+        ))),
+    }
+}
+
 /// Sentinel prefix/suffix for register references preserved through template rendering.
 pub const REGISTER_SENTINEL: &str = "__VERG_REG_";
 pub const REGISTER_SENTINEL_END: &str = "__VERG_END__";
@@ -624,6 +643,34 @@ mod tests {
         assert!(
             err.to_string().contains("too large") || err.to_string().contains("exceeds"),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn read_current_missing_file_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        assert_eq!(read_current(&missing).unwrap(), None);
+    }
+
+    #[test]
+    fn read_current_existing_file_is_some() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, "body\n").unwrap();
+        assert_eq!(read_current(&path).unwrap().as_deref(), Some("body\n"));
+    }
+
+    #[test]
+    fn read_current_unreadable_is_err_not_none() {
+        // A directory is not NotFound: read_to_string returns a non-NotFound
+        // error, which must surface as Err (NOT be silently treated as absent,
+        // which would let a caller clobber real state on a transient read error).
+        let dir = tempfile::tempdir().unwrap();
+        let err = read_current(dir.path()).unwrap_err();
+        assert!(
+            matches!(err, Error::Resource(_)),
+            "a non-NotFound read error must be Err, got: {err:?}"
         );
     }
 

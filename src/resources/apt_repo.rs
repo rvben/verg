@@ -88,11 +88,9 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     // Step 2: Repository list file
     let repo_line = format!("deb [arch={arch} signed-by={keyring_path}] {url} {suite} {component}");
-    let needs_update = if Path::new(&list_path).exists() {
-        let current = std::fs::read_to_string(&list_path).unwrap_or_default();
-        current.trim() != repo_line
-    } else {
-        true
+    let needs_update = match crate::resources::read_current(Path::new(&list_path))? {
+        Some(current) => current.trim() != repo_line,
+        None => true,
     };
 
     if needs_update {

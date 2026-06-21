@@ -41,21 +41,45 @@ pub fn resolve_interval(interval: Option<&str>, once: bool) -> Result<Option<Dur
 ///
 /// For any other `source`, the value is treated as a local filesystem path and
 /// read directly.
+/// Maximum bundle size accepted in pull mode. Matches the agent's stdin cap so
+/// a runaway or hostile bundle source cannot OOM the agent.
+const MAX_BUNDLE_BYTES: usize = 64 * 1024 * 1024;
+
 fn fetch_bundle_text(source: &str) -> Result<String, Error> {
-    if source.starts_with("http://") || source.starts_with("https://") {
-        let output = crate::resources::run_cmd("curl", &["-fsSL", source])?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::Config(format!(
-                "curl failed to fetch {source}: {stderr}"
-            )));
-        }
-        String::from_utf8(output.stdout)
-            .map_err(|e| Error::Parse(format!("bundle from {source} is not valid UTF-8: {e}")))
+    if source.starts_with("http://") {
+        // A published bundle carries decrypted secrets in plaintext; over plain
+        // http they can be read or replaced (MITM) in transit.
+        eprintln!(
+            "warning: fetching the bundle over plain http is insecure - the bundle \
+             contains decrypted secrets and can be read or replaced in transit; \
+             prefer https or a local path"
+        );
+        fetch_http(source)
+    } else if source.starts_with("https://") {
+        fetch_http(source)
     } else {
-        std::fs::read_to_string(source)
-            .map_err(|e| Error::Config(format!("failed to read bundle from {source}: {e}")))
+        let file = std::fs::File::open(source)
+            .map_err(|e| Error::Config(format!("failed to read bundle from {source}: {e}")))?;
+        crate::resources::read_bounded(file, MAX_BUNDLE_BYTES)
     }
+}
+
+fn fetch_http(source: &str) -> Result<String, Error> {
+    let max = MAX_BUNDLE_BYTES.to_string();
+    let output = crate::resources::run_cmd("curl", &["-fsSL", "--max-filesize", &max, source])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(Error::Config(format!(
+            "curl failed to fetch {source}: {stderr}"
+        )));
+    }
+    if output.stdout.len() > MAX_BUNDLE_BYTES {
+        return Err(Error::Config(format!(
+            "bundle from {source} exceeds {MAX_BUNDLE_BYTES} bytes"
+        )));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|e| Error::Parse(format!("bundle from {source} is not valid UTF-8: {e}")))
 }
 
 /// Fetch a bundle, converge once, write a redacted report, and return the summary.

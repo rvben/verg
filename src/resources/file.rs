@@ -23,12 +23,16 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             None
         };
 
+    // Parse the desired mode up front so a freshly-created file is written with
+    // the correct permissions atomically (no brief 0644 window before a separate
+    // chmod, which would expose a sensitive 0600 file).
+    let desired_mode = match resource.props.get("mode").and_then(|v| v.as_str()) {
+        Some(mode_str) => Some(parse_octal_mode(mode_str)?),
+        None => None,
+    };
+
     if let Some(desired) = &desired_content {
-        let current = if target.exists() {
-            std::fs::read_to_string(target).ok()
-        } else {
-            None
-        };
+        let current = crate::resources::read_current(target)?;
         if current.as_deref() != Some(desired.as_str()) {
             changes.push("content".to_string());
             if !dry_run {
@@ -36,26 +40,25 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                     std::fs::create_dir_all(parent)
                         .map_err(|e| Error::Resource(format!("failed to create dir: {e}")))?;
                 }
-                crate::resources::atomic::write_atomic(target, desired.as_bytes(), None)
+                crate::resources::atomic::write_atomic(target, desired.as_bytes(), desired_mode)
                     .map_err(|e| Error::Resource(format!("failed to write {path}: {e}")))?;
             }
         }
     }
 
-    if let Some(mode_str) = resource.props.get("mode").and_then(|v| v.as_str()) {
-        let desired_mode = parse_octal_mode(mode_str)?;
-        if target.exists() {
-            let current_mode = std::fs::metadata(target)
-                .map_err(|e| Error::Resource(format!("failed to stat {path}: {e}")))?
-                .permissions()
-                .mode()
-                & 0o7777;
-            if current_mode != desired_mode {
-                changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
-                if !dry_run {
-                    std::fs::set_permissions(target, std::fs::Permissions::from_mode(desired_mode))
-                        .map_err(|e| Error::Resource(format!("failed to chmod {path}: {e}")))?;
-                }
+    if let Some(desired_mode) = desired_mode
+        && target.exists()
+    {
+        let current_mode = std::fs::metadata(target)
+            .map_err(|e| Error::Resource(format!("failed to stat {path}: {e}")))?
+            .permissions()
+            .mode()
+            & 0o7777;
+        if current_mode != desired_mode {
+            changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
+            if !dry_run {
+                std::fs::set_permissions(target, std::fs::Permissions::from_mode(desired_mode))
+                    .map_err(|e| Error::Resource(format!("failed to chmod {path}: {e}")))?;
             }
         }
     }
@@ -123,6 +126,31 @@ mod tests {
         assert!(leftovers.is_empty(), "temp file left behind");
 
         // Second apply is a no-op (Ok), proving idempotency.
+        let second = execute(&r, false).unwrap();
+        assert_eq!(second.status, ResourceStatus::Ok);
+    }
+
+    #[test]
+    fn new_file_is_created_with_desired_mode() {
+        // A new file declared with mode 0600 must be created with 0600 directly
+        // (write_atomic receives the mode), never existing as 0644 first.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("secret.conf");
+        let mut props = HashMap::new();
+        props.insert(
+            "path".into(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        );
+        props.insert("content".into(), toml::Value::String("token\n".into()));
+        props.insert("mode".into(), toml::Value::String("0600".into()));
+        let r = resource("secret", props);
+
+        let result = execute(&r, false).unwrap();
+        assert_eq!(result.status, ResourceStatus::Changed);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o600, "new file must be created with mode 0600");
+
+        // Idempotent: a second apply reports no change (mode already correct).
         let second = execute(&r, false).unwrap();
         assert_eq!(second.status, ResourceStatus::Ok);
     }

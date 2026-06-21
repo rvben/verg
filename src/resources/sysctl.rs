@@ -50,7 +50,10 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     // Persist to /etc/sysctl.d/99-verg.conf so the setting survives reboot
     if persist {
         let conf_path = "/etc/sysctl.d/99-verg.conf";
-        let current_conf = std::fs::read_to_string(conf_path).unwrap_or_default();
+        // Treat a missing file as empty, but propagate any other read error so a
+        // transient failure never silently discards existing persisted settings.
+        let current_conf =
+            crate::resources::read_current(std::path::Path::new(conf_path))?.unwrap_or_default();
 
         // Space-tolerant: normalizes "key = val" and "key=val" to the same form for comparison.
         let has_correct_entry = current_conf.lines().any(|line| {

@@ -107,13 +107,8 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     // Only a missing /etc/fstab is treated as empty. Any other read error
     // (permission, I/O) must abort: treating it as empty would make upsert
     // produce a single-line file and atomically clobber the real fstab.
-    let fstab_content = match std::fs::read_to_string("/etc/fstab") {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => {
-            return Err(Error::Resource(format!("failed to read /etc/fstab: {e}")));
-        }
-    };
+    let fstab_content =
+        crate::resources::read_current(std::path::Path::new("/etc/fstab"))?.unwrap_or_default();
 
     let desired_line = format!("{device}\t{path}\t{fstype}\t{options}\t{dump}\t{pass}");
 

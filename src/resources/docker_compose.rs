@@ -37,17 +37,17 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     // Deploy compose file if content is provided
     if let Some(content) = resource.props.get("content").and_then(|v| v.as_str()) {
-        let current = if Path::new(&compose_path).exists() {
-            std::fs::read_to_string(&compose_path).ok()
-        } else {
-            None
-        };
+        let current = crate::resources::read_current(Path::new(&compose_path))?;
 
         if current.as_deref() != Some(content) {
             changes.push("compose file updated".to_string());
             if !dry_run {
-                std::fs::write(&compose_path, content)
-                    .map_err(|e| Error::Resource(format!("failed to write {compose_path}: {e}")))?;
+                crate::resources::atomic::write_atomic(
+                    Path::new(&compose_path),
+                    content.as_bytes(),
+                    None,
+                )
+                .map_err(|e| Error::Resource(format!("failed to write {compose_path}: {e}")))?;
             }
         }
     }
@@ -55,17 +55,17 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     // Deploy env file if provided
     if let Some(env_content) = resource.props.get("env_content").and_then(|v| v.as_str()) {
         let env_path = format!("{project_dir}/.env");
-        let current = if Path::new(&env_path).exists() {
-            std::fs::read_to_string(&env_path).ok()
-        } else {
-            None
-        };
+        let current = crate::resources::read_current(Path::new(&env_path))?;
 
         if current.as_deref() != Some(env_content) {
             changes.push(".env updated".to_string());
             if !dry_run {
-                std::fs::write(&env_path, env_content)
-                    .map_err(|e| Error::Resource(format!("failed to write {env_path}: {e}")))?;
+                crate::resources::atomic::write_atomic(
+                    Path::new(&env_path),
+                    env_content.as_bytes(),
+                    None,
+                )
+                .map_err(|e| Error::Resource(format!("failed to write {env_path}: {e}")))?;
             }
         }
     }
