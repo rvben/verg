@@ -21,6 +21,7 @@ Desired-state infrastructure convergence engine. A fast, stateless alternative t
 - **Continuous enforcement** - agents pull and re-converge on a schedule with no central server. See [docs/continuous-enforcement.md](docs/continuous-enforcement.md).
 - **Encrypted secrets** - secrets are encrypted at rest with [age](https://age-encryption.org/), decrypted on the control host at build time, and injected under the `secret.*` template namespace. See [docs/secrets.md](docs/secrets.md).
 - **Extensible** - define your own resource types as TOML data in `verg/resources/`; no recompile required.
+- **Native providers** - custom resource types as embedded-source scripts (any language) over a JSON protocol, self-contained in the bundle.
 
 ## Install
 
@@ -173,6 +174,8 @@ See [docs/resources.md](docs/resources.md) for the full common attributes refere
 | [`git`](docs/resources.md#git) | Clone a git repository and keep it checked out at a ref |
 
 You can also define your own resource types as data in `verg/resources/`. See [docs/resources.md - Custom resource types](docs/resources.md#custom-resource-types) for the definition format, param schema, and a worked example.
+
+For resource types that need a full scripting language or a richer protocol, **native providers** let you write the logic in any language and communicate over JSON-on-stdio. The script is embedded in the bundle at build time, so pull-mode agents are self-contained. See [docs/providers.md](docs/providers.md) for the declaration format, wire protocol, and a complete worked example.
 
 ## Complete Example
 
