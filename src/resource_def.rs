@@ -133,16 +133,15 @@ fn validate_default_value(
     default_val: &toml::Value,
     file_path: &str,
 ) -> Result<(), Error> {
-    let type_matches = match (param_type, default_val) {
-        ("string", toml::Value::String(_)) => true,
-        ("integer", toml::Value::Integer(_)) => true,
-        ("float", toml::Value::Float(_)) => true,
-        ("boolean", toml::Value::Boolean(_)) => true,
-        (_, toml::Value::Array(_)) | (_, toml::Value::Table(_)) | (_, toml::Value::Datetime(_)) => {
-            false
-        }
-        _ => false,
-    };
+    // Only the four scalar kinds are accepted, and only when they match the
+    // declared param_type. Array/Table/Datetime fall through to the catch-all.
+    let type_matches = matches!(
+        (param_type, default_val),
+        ("string", toml::Value::String(_))
+            | ("integer", toml::Value::Integer(_))
+            | ("float", toml::Value::Float(_))
+            | ("boolean", toml::Value::Boolean(_))
+    );
 
     if !type_matches {
         let actual_kind = match default_val {
