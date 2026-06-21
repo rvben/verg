@@ -8,6 +8,7 @@ pub mod engine;
 pub mod error;
 pub mod inventory;
 pub mod output;
+pub mod resource_def;
 pub mod resources;
 pub mod schema;
 pub mod state;
