@@ -639,6 +639,19 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                 for layer in &handler_layers {
                     for resource in layer {
                         let interpolated = interpolate_registers(resource, &registers);
+                        // A handler referencing a register that was never set must
+                        // not run with the literal sentinel (apply); fail clearly.
+                        if !dry_run && has_unresolved_registers(&interpolated) {
+                            results.push(ResourceResult::failed(
+                                resource.resource_type.clone(),
+                                format!("{} (handler)", resource.name),
+                                "unresolved register reference: a referenced register \
+                                 was never set (its producing resource may have been \
+                                 skipped by `when`)"
+                                    .to_string(),
+                            ));
+                            continue;
+                        }
                         let result =
                             execute_handler(&interpolated, dry_run, &resource_defs, &provider_defs);
                         let result = resources::redact_result(result, resource.sensitive);
@@ -935,6 +948,60 @@ mod tests {
         // Dry-run: reports Changed (value not yet available), not Failed.
         let dry = execute_bundle(make_bundle("h", vec![resource]), true).unwrap();
         assert_eq!(dry.resources[0].status, ResourceStatus::Changed);
+    }
+
+    #[test]
+    fn handler_with_unresolved_register_fails_in_apply() {
+        use crate::resources::{REGISTER_SENTINEL, REGISTER_SENTINEL_END};
+        let dir = tempfile::TempDir::new().unwrap();
+        let notifier_path = dir.path().join("notifier").to_string_lossy().into_owned();
+
+        // Notifier writes a fresh temp file (Changed) and notifies the handler.
+        let mut notifier = file_resource("n", &notifier_path);
+        notifier.notify = vec!["file.h".into()];
+
+        // Handler references a register that no resource produced.
+        let sentinel = format!("{REGISTER_SENTINEL}missing{REGISTER_SENTINEL_END}");
+        let mut hprops = HashMap::new();
+        hprops.insert(
+            "path".into(),
+            toml::Value::String("/verg-handler-should-never-write".into()),
+        );
+        hprops.insert(
+            "content".into(),
+            toml::Value::String(format!("v={sentinel}")),
+        );
+        let handler = ResolvedResource {
+            resource_type: "file".into(),
+            name: "h".into(),
+            props: hprops,
+            after: vec![],
+            notify: vec![],
+            when: None,
+            handler: true,
+            register: None,
+            sensitive: false,
+        };
+
+        let summary = execute_bundle(make_bundle("host", vec![notifier, handler]), false).unwrap();
+        let h = summary
+            .resources
+            .iter()
+            .find(|r| r.name.contains("(handler)"))
+            .expect("handler must have run");
+        assert_eq!(h.status, ResourceStatus::Failed);
+        assert!(
+            h.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("unresolved register"),
+            "got: {:?}",
+            h.error
+        );
+        assert!(
+            !std::path::Path::new("/verg-handler-should-never-write").exists(),
+            "the handler sentinel content must never be written"
+        );
     }
 
     #[test]
