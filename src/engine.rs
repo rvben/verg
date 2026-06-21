@@ -99,7 +99,11 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
         // typos fail locally and loudly even if the selector matches no hosts.
         let state_dir = base_dir.join("state");
         let state_files = state::load_state_dir(&state_dir)?;
-        crate::config::validate_state_files(&state_files, self.policy)?;
+        let resource_defs = crate::resource_def::load_resource_defs(
+            &base_dir.join("resources"),
+            crate::config::known_resource_types(),
+        )?;
+        crate::config::validate_state_files(&state_files, self.policy, &resource_defs)?;
         if state_dir.is_dir() {
             let mut entries: Vec<_> = std::fs::read_dir(&state_dir)
                 .map_err(|e| Error::Config(format!("failed to read {}: {e}", state_dir.display())))?
@@ -135,6 +139,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
 
         let inventory_ctx = Arc::new(inventory.to_template_context());
         let state_files = Arc::new(state_files);
+        let _resource_defs = Arc::new(resource_defs);
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.parallel));
         let mut join_set = JoinSet::new();
