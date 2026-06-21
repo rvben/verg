@@ -249,7 +249,11 @@ async fn run(
             commands::check::run(&engine, &base_dir, &targets, output, cancel).await
         }
         Command::Schema => {
-            verg::schema::run();
+            let custom_defs = verg::resource_def::load_resource_defs(
+                &base_dir.join("resources"),
+                verg::config::known_resource_types(),
+            )?;
+            verg::schema::run(&custom_defs);
             Ok(0)
         }
         Command::Init { force } => {

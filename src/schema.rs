@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
 use serde_json::{Value, json};
 
-pub fn run() {
+use crate::resource_def::ResourceDef;
+
+pub fn run(custom_defs: &HashMap<String, ResourceDef>) {
     let schema = json!({
         "clispec": "0.2",
         "name": "verg",
@@ -109,9 +113,59 @@ pub fn run() {
             "vars": {"type": "object", "description": "Resource-scoped variable overrides"},
             "sensitive": {"type": "boolean", "default": false, "description": "Redact this resource's diff/from/to/output from output and the changelog"}
         },
-        "resource_types": resource_schemas(),
+        "resource_types": build_resource_types(custom_defs),
     });
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+}
+
+fn build_resource_types(custom_defs: &HashMap<String, ResourceDef>) -> Value {
+    let mut types = resource_schemas();
+    let map = types
+        .as_object_mut()
+        .expect("resource_schemas returns an object");
+
+    for (type_name, def) in custom_defs {
+        let mut properties = serde_json::Map::new();
+        for (param_name, param) in &def.params {
+            let mut prop = serde_json::Map::new();
+            prop.insert("type".to_string(), json!(param.param_type));
+            prop.insert("required".to_string(), json!(param.required));
+            if let Some(default) = &param.default {
+                let default_json = toml_value_to_json(default);
+                prop.insert("default".to_string(), default_json);
+            }
+            if let Some(enum_values) = &param.enum_values {
+                prop.insert("enum".to_string(), json!(enum_values));
+            }
+            properties.insert(param_name.clone(), Value::Object(prop));
+        }
+        let entry = json!({
+            "description": def.description,
+            "custom": true,
+            "properties": Value::Object(properties),
+        });
+        map.insert(type_name.clone(), entry);
+    }
+
+    types
+}
+
+fn toml_value_to_json(v: &toml::Value) -> Value {
+    match v {
+        toml::Value::String(s) => json!(s),
+        toml::Value::Integer(i) => json!(i),
+        toml::Value::Float(f) => json!(f),
+        toml::Value::Boolean(b) => json!(b),
+        toml::Value::Array(arr) => Value::Array(arr.iter().map(toml_value_to_json).collect()),
+        toml::Value::Table(tbl) => {
+            let map: serde_json::Map<_, _> = tbl
+                .iter()
+                .map(|(k, v)| (k.clone(), toml_value_to_json(v)))
+                .collect();
+            Value::Object(map)
+        }
+        toml::Value::Datetime(dt) => json!(dt.to_string()),
+    }
 }
 
 fn resource_schemas() -> Value {
@@ -254,7 +308,133 @@ fn resource_schemas() -> Value {
 
 #[cfg(test)]
 mod tests {
+    use crate::resource_def::ParamSpec;
+
     use super::*;
+
+    fn lineinfile_def() -> ResourceDef {
+        let mut params = HashMap::new();
+        params.insert(
+            "path".to_string(),
+            ParamSpec {
+                param_type: "string".to_string(),
+                required: true,
+                default: None,
+                enum_values: None,
+            },
+        );
+        params.insert(
+            "line".to_string(),
+            ParamSpec {
+                param_type: "string".to_string(),
+                required: true,
+                default: None,
+                enum_values: None,
+            },
+        );
+        params.insert(
+            "state".to_string(),
+            ParamSpec {
+                param_type: "string".to_string(),
+                required: false,
+                default: Some(toml::Value::String("present".to_string())),
+                enum_values: Some(vec!["present".to_string(), "absent".to_string()]),
+            },
+        );
+        ResourceDef {
+            description: "Insert or remove a line in a file".to_string(),
+            params,
+            check: "grep -qF '{{ line }}' '{{ path }}'".to_string(),
+            apply: "echo '{{ line }}' >> '{{ path }}'".to_string(),
+        }
+    }
+
+    #[test]
+    fn custom_resource_appears_in_schema_with_custom_marker() {
+        let mut defs = HashMap::new();
+        defs.insert("lineinfile".to_string(), lineinfile_def());
+
+        let types = build_resource_types(&defs);
+        let obj = types.as_object().unwrap();
+
+        // Custom type is present.
+        assert!(
+            obj.contains_key("lineinfile"),
+            "lineinfile must appear in resource_types"
+        );
+
+        let lif = &obj["lineinfile"];
+        // Must carry the "custom": true marker.
+        assert_eq!(lif["custom"], true, "custom type must have 'custom': true");
+        // Description is forwarded.
+        assert_eq!(
+            lif["description"], "Insert or remove a line in a file",
+            "description must be forwarded"
+        );
+
+        let props = lif["properties"].as_object().unwrap();
+
+        // path: required, no default, no enum.
+        let path = &props["path"];
+        assert_eq!(path["type"], "string");
+        assert_eq!(path["required"], true);
+        assert!(path.get("default").is_none(), "path has no default");
+        assert!(path.get("enum").is_none(), "path has no enum");
+
+        // line: required, no default, no enum.
+        let line = &props["line"];
+        assert_eq!(line["type"], "string");
+        assert_eq!(line["required"], true);
+
+        // state: optional, default "present", enum [present, absent].
+        let state = &props["state"];
+        assert_eq!(state["type"], "string");
+        assert_eq!(state["required"], false);
+        assert_eq!(
+            state["default"], "present",
+            "state default must be 'present'"
+        );
+        let enum_vals: Vec<&str> = state["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(enum_vals, vec!["present", "absent"]);
+    }
+
+    #[test]
+    fn builtin_types_have_no_custom_marker() {
+        let defs = HashMap::new();
+        let types = build_resource_types(&defs);
+        let obj = types.as_object().unwrap();
+
+        for builtin in &["pkg", "file", "service", "cmd", "user", "sysctl", "cron"] {
+            let entry = &obj[*builtin];
+            assert!(
+                entry.get("custom").is_none(),
+                "built-in type '{builtin}' must NOT have a 'custom' key"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_custom_defs_leaves_schema_unchanged() {
+        let without_custom = build_resource_types(&HashMap::new());
+        let with_custom = {
+            let defs = HashMap::new();
+            build_resource_types(&defs)
+        };
+        assert_eq!(
+            without_custom, with_custom,
+            "empty custom_defs must not change schema output"
+        );
+        // And all builtins are present.
+        let obj = without_custom.as_object().unwrap();
+        for t in &["pkg", "file", "service", "cmd", "user", "sysctl", "cron"] {
+            assert!(obj.contains_key(*t));
+        }
+    }
 
     #[test]
     fn schema_has_all_resource_types() {
