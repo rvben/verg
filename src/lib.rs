@@ -12,6 +12,7 @@ pub mod output;
 pub mod resource_def;
 pub mod resources;
 pub mod schema;
+pub mod secrets;
 pub mod serve;
 pub mod state;
 pub mod transport;
