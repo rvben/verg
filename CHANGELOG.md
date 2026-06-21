@@ -13,6 +13,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.7.0](https://github.com/rvben/verg/compare/v0.6.5...v0.7.0) - 2026-06-21
+
+### Added
+
+- **cli**: implement --quiet; add --force to init schema ([bf8925b](https://github.com/rvben/verg/commit/bf8925bdf975fbc0b653631eb580199fd313e092))
+- **diff**: implement --limit/--offset pagination and --fields filtering ([979549e](https://github.com/rvben/verg/commit/979549e6989fbf23bd65f6eb06f664178da02e9a))
+
+### Fixed
+
+- **apply**: send result text to stdout, not stderr [breaking] ([79f6f25](https://github.com/rvben/verg/commit/79f6f25c37c9689272230ce5a63dd43c3104a062))
+- **when**: give || lower precedence than && (standard) ([0164034](https://github.com/rvben/verg/commit/0164034dc448d4f6b7d04ae01282e05b4c8949cb))
+- **cli**: align exit codes to the documented contract [breaking] ([b7153ca](https://github.com/rvben/verg/commit/b7153ca5cceddca2107ebcc2760a391a1b6776b0))
+- **check**: print a per-host summary in text mode ([5d2ddf1](https://github.com/rvben/verg/commit/5d2ddf12a5c5d9426a2abcde699ac8789b3a52aa))
+- **diff**: show failures as FAILED, not 'would change'; fix empty-detail line ([6bd8aea](https://github.com/rvben/verg/commit/6bd8aea918b49a405e4905c9058f54522aa47fbe))
+- **init**: do not clobber existing project files; add --force ([6c7dc6f](https://github.com/rvben/verg/commit/6c7dc6f72b9459215176f7b06c73e2438d95f5d1))
+
+### Performance
+
+- **ssh**: offload local hashing to spawn_blocking and serialize per-arch agent downloads ([ebe20c7](https://github.com/rvben/verg/commit/ebe20c7c75f3c73062e3bc09bd272aadabab8170))
+- **control**: share state files via Arc and memoize the agent checksum manifest ([0f09229](https://github.com/rvben/verg/commit/0f09229e7a50b9328c8fdff0f46f796512c556c0))
+- **agent**: cache only successful suite detection to preserve error text ([ed35e0a](https://github.com/rvben/verg/commit/ed35e0a1822ea59094d7a77c5ef9c5b2f6c5da59))
+- **agent**: memoize package-manager and suite detection per run ([f6e34e0](https://github.com/rvben/verg/commit/f6e34e0bc48006e5a13e90273dedbf3437c8a944))
+- **ssh**: collect facts and agent version in one preflight round-trip ([a8dd34a](https://github.com/rvben/verg/commit/a8dd34adb74a6a8f19bbb82d008535405d42a9a6))
+- **ssh**: scope control sockets per host under a short path ([68a6803](https://github.com/rvben/verg/commit/68a680341ec8ed292e1edaeec6475b16a0293b36))
+- **ssh**: reuse one connection per host via ControlMaster multiplexing ([f8bed52](https://github.com/rvben/verg/commit/f8bed52c06f1c7b23987e6033a32b0646c608b75))
+
 ## [0.6.5](https://github.com/rvben/verg/compare/v0.6.4...v0.6.5) - 2026-06-20
 
 ### Added
