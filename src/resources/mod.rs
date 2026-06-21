@@ -11,6 +11,7 @@ pub mod file;
 pub mod git;
 pub mod hostname;
 pub mod mount;
+pub mod native;
 pub mod pkg;
 pub mod service;
 pub mod sysctl;
