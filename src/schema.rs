@@ -480,17 +480,28 @@ mod tests {
     fn schema_has_all_resource_types() {
         let schemas = resource_schemas();
         let obj = schemas.as_object().unwrap();
-        assert!(obj.contains_key("pkg"));
-        assert!(obj.contains_key("file"));
-        assert!(obj.contains_key("hostname"));
-        assert!(obj.contains_key("mount"));
-        assert!(obj.contains_key("service"));
-        assert!(obj.contains_key("cmd"));
-        assert!(obj.contains_key("user"));
-        assert!(obj.contains_key("sysctl"));
-        assert!(obj.contains_key("timezone"));
-        assert!(obj.contains_key("cron"));
-        assert!(obj.contains_key("git"));
+        // Every built-in type must have a schema entry. Keep this in sync with
+        // config::known_resource_types().
+        for t in [
+            "apt_repo",
+            "directory",
+            "docker_compose",
+            "download",
+            "pkg",
+            "file",
+            "service",
+            "sysctl",
+            "cmd",
+            "cron",
+            "user",
+            "hostname",
+            "timezone",
+            "mount",
+            "git",
+        ] {
+            assert!(obj.contains_key(t), "schema missing resource type: {t}");
+        }
+        assert_eq!(obj.len(), 15, "schema resource_types count drifted");
     }
 
     #[test]

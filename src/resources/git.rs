@@ -71,12 +71,15 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 .unwrap_or(false);
 
             if !is_repo {
-                // Detect the case where path exists but is not a git repo.
-                if Path::new(path).exists()
-                    && std::fs::read_dir(path)
-                        .map(|mut d| d.next().is_some())
-                        .unwrap_or(false)
-                {
+                // Detect the case where path exists but is not a git repo: a
+                // regular file, or a non-empty directory. git clone would fail
+                // cryptically in both cases, so fail cleanly instead.
+                let p = Path::new(path);
+                let is_file = p.is_file();
+                let nonempty_dir = std::fs::read_dir(path)
+                    .map(|mut d| d.next().is_some())
+                    .unwrap_or(false);
+                if is_file || nonempty_dir {
                     return Ok(ResourceResult::failed(
                         "git",
                         name,

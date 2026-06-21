@@ -21,6 +21,13 @@ fn fstab_has_entry<'a>(content: &'a str, path: &str) -> Option<&'a str> {
     })
 }
 
+/// Whether two fstab lines are equivalent by FIELD (whitespace-insensitive), so
+/// a hand-written space-delimited entry is not treated as drift against our
+/// tab-delimited desired line. Compares the whitespace-split field sequences.
+fn fstab_fields_match(existing: &str, desired: &str) -> bool {
+    existing.split_whitespace().eq(desired.split_whitespace())
+}
+
 /// Return a new fstab content string with the line for `path` replaced by
 /// `desired_line`, or with `desired_line` appended when no such line exists.
 /// Blank lines, comments, and all other entries are preserved in their
@@ -114,9 +121,12 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     match state {
         "mounted" => {
-            // Phase 1: ensure fstab entry is correct.
+            // Phase 1: ensure fstab entry is correct. Compare by FIELDS so an
+            // existing space-delimited entry equal to our tab-delimited desired
+            // line is not rewritten every run.
             let existing_line = fstab_has_entry(&fstab_content, path);
-            if existing_line != Some(desired_line.as_str()) {
+            let entry_ok = existing_line.is_some_and(|l| fstab_fields_match(l, &desired_line));
+            if !entry_ok {
                 changes.push(format!("fstab entry for {path}"));
                 if !dry_run {
                     let new_content = upsert_fstab(&fstab_content, &desired_line, path);
@@ -187,6 +197,20 @@ mod tests {
             fstab_has_entry(content, "/"),
             Some("/dev/sda2\t/\text4\tdefaults\t0\t1")
         );
+    }
+
+    #[test]
+    fn fstab_fields_match_is_whitespace_insensitive() {
+        // A space-delimited existing entry equals our tab-delimited desired line.
+        assert!(fstab_fields_match(
+            "/dev/sda1 /data ext4 defaults 0 0",
+            "/dev/sda1\t/data\text4\tdefaults\t0\t0"
+        ));
+        // A genuine field difference (different fstype) is NOT a match.
+        assert!(!fstab_fields_match(
+            "/dev/sda1 /data xfs defaults 0 0",
+            "/dev/sda1\t/data\text4\tdefaults\t0\t0"
+        ));
     }
 
     #[test]
