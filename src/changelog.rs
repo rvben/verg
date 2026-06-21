@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
@@ -41,6 +41,40 @@ pub fn redact_for_changelog(summaries: &[RunSummary]) -> Vec<RunSummary> {
             }
         })
         .collect()
+}
+
+/// Write a redacted JSON run-report for a single serve-mode convergence cycle.
+///
+/// The file is written to `report_dir/<timestamp>-serve.json`. The caller
+/// provides a filesystem-safe timestamp (colons replaced with hyphens,
+/// e.g. `%Y-%m-%dT%H-%M-%S`) so the filename is valid on all platforms.
+/// Redaction reuses `redact_for_changelog`: from/to/output are stripped and
+/// long diffs are truncated, matching apply-log policy.
+pub fn write_serve_report(
+    report_dir: &Path,
+    summary: &RunSummary,
+    source: &str,
+    timestamp: &str,
+) -> Result<PathBuf, Error> {
+    std::fs::create_dir_all(report_dir)
+        .map_err(|e| Error::Other(format!("failed to create report dir: {e}")))?;
+
+    let redacted = redact_for_changelog(std::slice::from_ref(summary));
+    let redacted_summary = &redacted[0];
+
+    let report = serde_json::json!({
+        "timestamp": timestamp,
+        "source": source,
+        "summary": redacted_summary,
+    });
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|e| Error::Other(format!("failed to serialize serve report: {e}")))?;
+
+    let path = report_dir.join(format!("{timestamp}-serve.json"));
+    std::fs::write(&path, json)
+        .map_err(|e| Error::Other(format!("failed to write serve report: {e}")))?;
+
+    Ok(path)
 }
 
 pub fn write_log(base_dir: &Path, summaries: &[RunSummary]) -> Result<(), Error> {
@@ -88,6 +122,61 @@ mod tests {
             "diff should be truncated"
         );
         assert_eq!(r.status, ResourceStatus::Changed);
+    }
+
+    #[test]
+    fn write_serve_report_creates_redacted_json() {
+        let dir = TempDir::new().unwrap();
+        let summary = RunSummary::from_results(
+            "host1",
+            vec![ResourceResult {
+                resource_type: "file".into(),
+                name: "/etc/motd".into(),
+                status: ResourceStatus::Changed,
+                diff: Some("updated".into()),
+                from: Some("old content".into()),
+                to: Some("new content".into()),
+                error: None,
+                output: Some("captured output".into()),
+            }],
+        );
+
+        let path = write_serve_report(
+            dir.path(),
+            &summary,
+            "file:///tmp/b.toml",
+            "2026-06-21T10-30-00",
+        )
+        .unwrap();
+
+        assert!(path.exists(), "report file should exist");
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("2026-06-21T10-30-00-serve.json"),
+            "filename should end with timestamp-serve.json"
+        );
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(json["timestamp"], "2026-06-21T10-30-00");
+        assert_eq!(json["source"], "file:///tmp/b.toml");
+
+        let res = &json["summary"]["resources"][0];
+        assert!(
+            res["from"].is_null() || res.get("from").is_none(),
+            "from should be redacted"
+        );
+        assert!(
+            res["to"].is_null() || res.get("to").is_none(),
+            "to should be redacted"
+        );
+        assert!(
+            res["output"].is_null() || res.get("output").is_none(),
+            "output should be redacted"
+        );
     }
 
     #[test]
