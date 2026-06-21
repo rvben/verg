@@ -36,3 +36,10 @@ ref = "main"
 schedule = "0 3 * * *"
 command = "/usr/local/bin/backup.sh"
 user = "root"
+
+# Test: download a file (curl fetches a local file:// URL), verify checksum + mode
+[resource.download.payload]
+url = "file:///tmp/verg-download-seed.txt"
+dest = "/tmp/verg-downloaded.txt"
+checksum = "303b8a868e82b87350c892f503009693c37fe736bc5b2ef9e2f0a26e1014c7cd"
+mode = "0640"

@@ -157,6 +157,11 @@ docker exec "$CONTAINER_NAME" sh -c '
 ' || fail "failed to seed bare git repo"
 info "  seeded bare git repo at /tmp/repo.git (branch main)"
 
+# Seed a payload for the download resource (fetched via a file:// URL by curl).
+docker exec "$CONTAINER_NAME" sh -c "printf 'verg-download-payload\n' > /tmp/verg-download-seed.txt" \
+    || fail "failed to seed download payload"
+info "  seeded download payload at /tmp/verg-download-seed.txt"
+
 # --- Test 2: apply ---
 
 info "Test 2: verg apply..."
@@ -218,6 +223,11 @@ docker exec "$CONTAINER_NAME" test -f /etc/cron.d/verg-backup || fail "cron reso
 docker exec "$CONTAINER_NAME" grep -qF '0 3 * * *  root  /usr/local/bin/backup.sh' /etc/cron.d/verg-backup || fail "cron file missing the expected job line"
 docker exec "$CONTAINER_NAME" sh -c 'test "$(stat -c %a /etc/cron.d/verg-backup)" = "644"' || fail "cron file mode is not 0644"
 info "  /etc/cron.d/verg-backup: cron job written with mode 0644"
+
+# Check download resource (curl file:// fetch + checksum + mode)
+docker exec "$CONTAINER_NAME" grep -qxF 'verg-download-payload' /tmp/verg-downloaded.txt || fail "download resource did not place the payload"
+docker exec "$CONTAINER_NAME" sh -c 'test "$(stat -c %a /tmp/verg-downloaded.txt)" = "640"' || fail "downloaded file mode is not 0640"
+info "  /tmp/verg-downloaded.txt: downloaded with checksum verified and mode 0640"
 
 # Check secret decryption and rendering (age backend)
 if [ "$SECRETS" = 1 ]; then
