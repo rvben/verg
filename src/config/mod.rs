@@ -3,10 +3,30 @@
 //! remote agent (or silently doing the wrong thing).
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::error::Error;
 use crate::resource_def::ResourceDef;
 use crate::state::StateFile;
+
+/// Locate the project root (the directory containing `hosts.toml`) by walking up
+/// from `start`. At each ancestor a `verg/` subdirectory is also checked, so
+/// running from the parent of a `verg/` project keeps working. Returns `None`
+/// when no `hosts.toml` is found anywhere up to the filesystem root.
+pub fn discover_project_root(start: &Path) -> Option<PathBuf> {
+    let mut current = Some(start);
+    while let Some(dir) = current {
+        if dir.join("hosts.toml").is_file() {
+            return Some(dir.to_path_buf());
+        }
+        let nested = dir.join("verg");
+        if nested.join("hosts.toml").is_file() {
+            return Some(nested);
+        }
+        current = dir.parent();
+    }
+    None
+}
 
 /// Validate prop names, required params, types, and enum constraints for a
 /// custom or native provider resource instance. Shared by the custom-def and
@@ -730,5 +750,61 @@ zone = "example.com"
         let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new(), &providers)
             .unwrap_err();
         assert!(err.to_string().contains("zone"), "got: {err}");
+    }
+
+    fn same_dir(a: &std::path::Path, b: &std::path::Path) {
+        assert_eq!(
+            std::fs::canonicalize(a).unwrap(),
+            std::fs::canonicalize(b).unwrap()
+        );
+    }
+
+    #[test]
+    fn discover_finds_hosts_toml_in_current_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("hosts.toml"), "").unwrap();
+        let found = discover_project_root(dir.path()).expect("should find project");
+        same_dir(&found, dir.path());
+    }
+
+    #[test]
+    fn discover_walks_up_to_project_root() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("hosts.toml"), "").unwrap();
+        let deep = dir.path().join("state").join("nested");
+        std::fs::create_dir_all(&deep).unwrap();
+        let found = discover_project_root(&deep).expect("should walk up to project root");
+        same_dir(&found, dir.path());
+    }
+
+    #[test]
+    fn discover_finds_verg_subdir_from_parent() {
+        // Backward compatibility: running from the parent of a `verg/` project.
+        let parent = tempfile::TempDir::new().unwrap();
+        let verg = parent.path().join("verg");
+        std::fs::create_dir_all(&verg).unwrap();
+        std::fs::write(verg.join("hosts.toml"), "").unwrap();
+        let found = discover_project_root(parent.path()).expect("should find verg/ subproject");
+        same_dir(&found, &verg);
+    }
+
+    #[test]
+    fn discover_prefers_direct_hosts_toml_over_verg_subdir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("hosts.toml"), "").unwrap();
+        let verg = dir.path().join("verg");
+        std::fs::create_dir_all(&verg).unwrap();
+        std::fs::write(verg.join("hosts.toml"), "").unwrap();
+        // Standing inside a project, the project itself wins over any verg/ child.
+        let found = discover_project_root(dir.path()).unwrap();
+        same_dir(&found, dir.path());
+    }
+
+    #[test]
+    fn discover_returns_none_without_hosts_toml() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sub = dir.path().join("a").join("b");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert!(discover_project_root(&sub).is_none());
     }
 }

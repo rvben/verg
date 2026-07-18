@@ -127,6 +127,20 @@ impl Inventory {
         })
     }
 
+    /// Sorted host names and the sorted, de-duplicated set of group names.
+    /// Used to list valid targets when a selector matches nothing.
+    pub fn target_names(&self) -> (Vec<String>, Vec<String>) {
+        let mut hosts: Vec<String> = self.hosts.keys().cloned().collect();
+        hosts.sort();
+        let mut groups: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for host in self.hosts.values() {
+            for group in &host.groups {
+                groups.insert(group.clone());
+            }
+        }
+        (hosts, groups.into_iter().collect())
+    }
+
     pub fn filter(&self, selector: &selector::Selector) -> Result<Vec<&Host>, Error> {
         use selector::Selector;
         match selector {
@@ -305,6 +319,15 @@ custom = "from_group"
         let sel = selector::parse_selector("all").unwrap();
         let hosts = inv.filter(&sel).unwrap();
         assert_eq!(hosts.len(), 3);
+    }
+
+    #[test]
+    fn target_names_are_sorted_and_groups_deduped() {
+        let inv = build_test_inventory();
+        let (hosts, groups) = inv.target_names();
+        assert_eq!(hosts, vec!["db1", "web1", "web2"]);
+        // `web` and `prod` appear on multiple hosts but list once, sorted.
+        assert_eq!(groups, vec!["db", "prod", "staging", "web"]);
     }
 
     #[test]

@@ -32,6 +32,8 @@ struct Cli {
     #[arg(long, short = 'y', global = true)]
     yes: bool,
 
+    /// Project directory. Defaults to the nearest ancestor containing hosts.toml
+    /// (or a verg/ subdirectory), discovered by walking up from the current dir.
     #[arg(long, env = "VERG_PATH", global = true)]
     path: Option<PathBuf>,
 
@@ -214,7 +216,6 @@ async fn run(
     output: &OutputConfig,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<i32, Error> {
-    let base_dir = cli.path.clone().unwrap_or_else(|| PathBuf::from("verg"));
     let policy = if cli.lax_config {
         verg::config::ConfigPolicy::lax()
     } else {
@@ -235,6 +236,7 @@ async fn run(
 
     match cli.command {
         Command::Apply { targets } => {
+            let base_dir = resolve_project_dir(cli.path.clone())?;
             let engine = build_engine(engine_config)?;
             commands::apply::run(&engine, &base_dir, &targets, cli.yes, output, cancel).await
         }
@@ -244,6 +246,7 @@ async fn run(
             offset,
             fields,
         } => {
+            let base_dir = resolve_project_dir(cli.path.clone())?;
             let engine = build_engine(engine_config)?;
             commands::diff::run(
                 &engine,
@@ -260,10 +263,14 @@ async fn run(
             .await
         }
         Command::Check { targets } => {
+            let base_dir = resolve_project_dir(cli.path.clone())?;
             let engine = build_engine(engine_config)?;
             commands::check::run(&engine, &base_dir, &targets, output, cancel).await
         }
         Command::Schema => {
+            // Schema works with built-in types outside a project; discover one
+            // if present so custom resource/provider defs are included.
+            let base_dir = discover_project_dir(cli.path.clone());
             let custom_defs = verg::resource_def::load_resource_defs(
                 &base_dir.join("resources"),
                 verg::config::known_resource_types(),
@@ -278,6 +285,8 @@ async fn run(
             Ok(0)
         }
         Command::Init { force } => {
+            // Init creates a project; it must not discover an existing one.
+            let base_dir = cli.path.clone().unwrap_or_else(|| PathBuf::from("verg"));
             commands::init::run(&base_dir, force)?;
             Ok(0)
         }
@@ -287,14 +296,49 @@ async fn run(
             clap_complete::generate(shell, &mut cmd, "verg", &mut std::io::stdout());
             Ok(0)
         }
-        Command::Publish { targets, dest } => commands::publish::run(
-            &base_dir,
-            &targets,
-            &dest,
-            policy,
-            cli.age_identity.as_deref(),
-        ),
+        Command::Publish { targets, dest } => {
+            let base_dir = resolve_project_dir(cli.path.clone())?;
+            commands::publish::run(
+                &base_dir,
+                &targets,
+                &dest,
+                policy,
+                cli.age_identity.as_deref(),
+            )
+        }
     }
+}
+
+/// Resolve the project directory for a command that requires one. An explicit
+/// `--path`/`VERG_PATH` wins; otherwise the project root is discovered by
+/// walking up from the current directory. Fails with a clear message when no
+/// project is found, instead of silently loading an empty inventory.
+fn resolve_project_dir(explicit: Option<PathBuf>) -> Result<PathBuf, Error> {
+    if let Some(path) = explicit {
+        return Ok(path);
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|e| Error::Other(format!("failed to read current directory: {e}")))?;
+    verg::config::discover_project_root(&cwd).ok_or_else(|| {
+        Error::Config(format!(
+            "no verg project found: no hosts.toml in {} or any parent directory \
+             (nor in a verg/ subdirectory). Run verg from your project directory, \
+             or pass --path <dir>.",
+            cwd.display()
+        ))
+    })
+}
+
+/// Like `resolve_project_dir`, but never fails: used by `schema`, which is
+/// useful even outside a project (built-in types only). Falls back to `verg`.
+fn discover_project_dir(explicit: Option<PathBuf>) -> PathBuf {
+    explicit
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|cwd| verg::config::discover_project_root(&cwd))
+        })
+        .unwrap_or_else(|| PathBuf::from("verg"))
 }
 
 fn build_engine(cfg: EngineConfig) -> Result<Engine, Error> {

@@ -201,3 +201,76 @@ fn completions_zsh() {
         "zsh completions must define the _verg completion function"
     );
 }
+
+/// Write a minimal but valid project (one host) into `dir`.
+fn write_min_project(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join("state")).unwrap();
+    std::fs::create_dir_all(dir.join("groups")).unwrap();
+    std::fs::write(
+        dir.join("hosts.toml"),
+        "[hosts.web]\naddress = \"192.0.2.10\"\nuser = \"root\"\ngroups = [\"prod\"]\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn discovers_project_from_inside_dir_without_path() {
+    // Running from inside the project (no --path) must find it, not report the
+    // target as missing. A bad target then errors before any SSH, listing what
+    // is available — which proves the project loaded.
+    let dir = TempDir::new().unwrap();
+    write_min_project(dir.path());
+    let output = Command::new(env!("CARGO_BIN_EXE_verg"))
+        .args(["diff", "--targets", "nope"])
+        .current_dir(dir.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("available hosts: web"),
+        "discovery should load the project and list valid targets, got: {stderr}"
+    );
+}
+
+#[test]
+fn discovers_verg_subdir_from_parent_without_path() {
+    // Backward compatibility: running from the parent of a `verg/` project.
+    let parent = TempDir::new().unwrap();
+    write_min_project(&parent.path().join("verg"));
+    let output = Command::new(env!("CARGO_BIN_EXE_verg"))
+        .args(["diff", "--targets", "nope"])
+        .current_dir(parent.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("available hosts: web"),
+        "verg/ subdirectory discovery should work from the parent, got: {stderr}"
+    );
+}
+
+#[test]
+fn no_project_found_reports_clear_error() {
+    // No project anywhere up the tree, and no --path: fail with an explicit
+    // message, not the misleading "target not found".
+    let dir = TempDir::new().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_verg"))
+        .args(["diff", "--targets", "all"])
+        .current_dir(dir.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("no verg project found"),
+        "expected a clear no-project error, got: {stderr}"
+    );
+}

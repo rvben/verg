@@ -20,6 +20,24 @@ pub struct Engine<T: Transport = SshTransport> {
     pub age_identity: Option<std::path::PathBuf>,
 }
 
+/// Build a `TargetNotFound` error that names the requested selector and lists
+/// the hosts and groups the project actually defines.
+fn unknown_target_error(selector: &str, inventory: &Inventory) -> Error {
+    let (host_names, group_names) = inventory.target_names();
+    let fmt = |v: Vec<String>| {
+        if v.is_empty() {
+            "(none)".to_string()
+        } else {
+            v.join(", ")
+        }
+    };
+    Error::TargetNotFound(format!(
+        "{selector}; available hosts: {} | groups: {}",
+        fmt(host_names),
+        fmt(group_names),
+    ))
+}
+
 #[derive(Debug)]
 pub struct EngineResult {
     pub summaries: Vec<RunSummary>,
@@ -137,12 +155,38 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
         }
 
         let selector = selector::parse_selector(target_selector)?;
-        let hosts = inventory.filter(&selector)?;
+        let is_all = matches!(selector, crate::inventory::selector::Selector::All);
 
-        // A non-empty selector that matches nothing is an error. The "all"
-        // selector on an empty inventory is valid (nothing to do).
-        if hosts.is_empty() && !matches!(selector, crate::inventory::selector::Selector::All) {
-            return Err(Error::TargetNotFound(target_selector.into()));
+        // An empty inventory is not a bad target: the project or its inventory is
+        // the problem. Say which, rather than blaming the target name. ("all" on
+        // an empty inventory is a valid no-op and falls through below.)
+        if inventory.hosts.is_empty() && !is_all {
+            let hosts_toml = base_dir.join("hosts.toml");
+            return Err(Error::Config(if hosts_toml.is_file() {
+                format!("no hosts defined in {}", hosts_toml.display())
+            } else {
+                format!(
+                    "no hosts.toml in {}; this is not a verg project directory \
+                     (run verg from your project, or pass --path <dir>)",
+                    base_dir.display()
+                )
+            }));
+        }
+
+        let hosts = match inventory.filter(&selector) {
+            Ok(hosts) => hosts,
+            // A selector naming an unknown host/group: re-raise with the set of
+            // valid targets so the typo is immediately actionable.
+            Err(Error::TargetNotFound(_)) => {
+                return Err(unknown_target_error(target_selector, &inventory));
+            }
+            Err(e) => return Err(e),
+        };
+
+        // A non-"all" selector that matched nothing (e.g. an exclude that removed
+        // everything) is still an error, with the same actionable target list.
+        if hosts.is_empty() && !is_all {
+            return Err(unknown_target_error(target_selector, &inventory));
         }
 
         if hosts.is_empty() {
