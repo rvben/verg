@@ -103,6 +103,11 @@ pub fn parse_preflight(
         if let Some((key, val)) = line.split_once('=') {
             if key == "version" {
                 version = Some(val.to_string());
+            } else if key == "virt" && val == "none" {
+                // systemd-detect-virt prints "none" on bare metal. Store it empty
+                // so `when = "fact.virt"` is falsy there (matching the intent
+                // "is virtualized"); an explicit bare-metal check uses !fact.virt.
+                facts.insert("fact.virt".to_string(), String::new());
             } else {
                 facts.insert(format!("fact.{key}"), val.to_string());
             }
@@ -265,6 +270,7 @@ impl SshTransport {
              echo \"os=$(. /etc/os-release 2>/dev/null && echo $ID)\" && \
              echo \"os_release=$(. /etc/os-release 2>/dev/null && echo $VERSION_CODENAME)\" && \
              echo \"os_version=$(. /etc/os-release 2>/dev/null && echo $VERSION_ID)\" && \
+             echo \"virt=$(systemd-detect-virt 2>/dev/null)\" && \
              echo \"version=$(cat /usr/local/share/verg/version 2>/dev/null)\""
                 .into(),
         );
@@ -660,7 +666,7 @@ mod tests {
 
     #[test]
     fn parse_preflight_extracts_facts_and_version() {
-        let out = "arch=x86_64\nhostname=web1\nos=ubuntu\nos_release=jammy\nos_version=22.04\nversion=0.6.5\n";
+        let out = "arch=x86_64\nhostname=web1\nos=ubuntu\nos_release=jammy\nos_version=22.04\nvirt=lxc\nversion=0.6.5\n";
         let (facts, version) = parse_preflight(out);
         assert_eq!(facts.get("fact.arch").map(String::as_str), Some("x86_64"));
         assert_eq!(facts.get("fact.hostname").map(String::as_str), Some("web1"));
@@ -673,7 +679,20 @@ mod tests {
             facts.get("fact.os_version").map(String::as_str),
             Some("22.04")
         );
+        // virtualization fact drives environment-specific conditionals
+        // (e.g. cgroupfs on unprivileged LXCs) instead of an OS proxy.
+        assert_eq!(facts.get("fact.virt").map(String::as_str), Some("lxc"));
         assert_eq!(version.as_deref(), Some("0.6.5"));
+    }
+
+    #[test]
+    fn parse_preflight_normalizes_bare_metal_virt_to_empty() {
+        // systemd-detect-virt prints "none" on bare metal; store it empty so
+        // `when = "fact.virt"` is falsy there. A real hypervisor is preserved.
+        let (facts, _) = parse_preflight("virt=none\n");
+        assert_eq!(facts.get("fact.virt").map(String::as_str), Some(""));
+        let (facts, _) = parse_preflight("virt=kvm\n");
+        assert_eq!(facts.get("fact.virt").map(String::as_str), Some("kvm"));
     }
 
     #[test]
