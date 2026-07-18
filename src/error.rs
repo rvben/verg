@@ -64,6 +64,22 @@ impl Error {
             Error::Io(_) | Error::Other(_) => "internal_error",
         }
     }
+
+    /// The `resource_type` label to use when a per-host failure is synthesized
+    /// into a `ResourceResult`. It classifies *why* the host failed so a config
+    /// or parse error is not reported (and exit-coded) as if the host was
+    /// unreachable.
+    pub fn failure_kind(&self) -> &'static str {
+        match self {
+            Error::Connection(_) => "connection",
+            Error::Config(_) | Error::Parse(_) => "config",
+            Error::Io(_) | Error::Other(_) => "internal",
+            Error::TargetNotFound(_) => "target",
+            Error::Resource(_) => "resource",
+            Error::ConfirmationRequired(_) => "confirmation",
+            Error::Conflict(_) => "conflict",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -112,6 +128,16 @@ mod tests {
         let err = Error::Conflict("state mismatch".into());
         assert_eq!(err.exit_code(), exit_codes::CONFLICT);
         assert_eq!(err.kind_str(), "conflict");
+    }
+
+    #[test]
+    fn failure_kind_distinguishes_config_from_connection() {
+        // A parse/config failure must not be labelled "connection": otherwise a
+        // broken config looks like an unreachable host and exit-codes as one.
+        assert_eq!(Error::Connection("ssh".into()).failure_kind(), "connection");
+        assert_eq!(Error::Parse("env not set".into()).failure_kind(), "config");
+        assert_eq!(Error::Config("bad toml".into()).failure_kind(), "config");
+        assert_eq!(Error::Other("panic".into()).failure_kind(), "internal");
     }
 
     #[test]

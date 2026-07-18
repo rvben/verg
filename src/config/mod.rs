@@ -101,6 +101,11 @@ fn validate_param_props(
     Ok(())
 }
 
+/// Resource-type names reserved for the engine's synthesized host-level failure
+/// results, which drive exit-code classification. A user resource type may not
+/// use these.
+pub const RESERVED_FAILURE_TYPES: &[&str] = &["connection", "config"];
+
 /// Validate resource types, prop names, and special-key types across all state
 /// files. Strict mode errors on the first violation; lax mode warns and continues.
 /// Custom resource definitions in `custom_defs` and native provider definitions
@@ -115,6 +120,20 @@ pub fn validate_state_files(
     for sf in files {
         for decl in sf.resources()? {
             let fqn = format!("{}.{}", decl.resource_type, decl.name);
+
+            // These names are synthesized by the engine for host-level failures
+            // (see Error::failure_kind) and drive exit-code classification
+            // (is_connection_only_failure / is_config_only_failure). A user
+            // resource type must not shadow them, or a real resource failure
+            // could be mis-exit-coded as a connection/config failure. This is a
+            // hard error regardless of policy: unlike a typo, a shadowing name
+            // silently breaks classification, so --lax-config must not tolerate it.
+            if RESERVED_FAILURE_TYPES.contains(&decl.resource_type.as_str()) {
+                return Err(Error::Config(format!(
+                    "{fqn}: resource type '{}' is reserved for internal failure reporting; rename it",
+                    decl.resource_type
+                )));
+            }
 
             let is_builtin = known_resource_types().contains(&decl.resource_type.as_str());
             let custom_def = custom_defs.get(&decl.resource_type);
@@ -750,6 +769,22 @@ zone = "example.com"
         let err = validate_state_files(&[f], ConfigPolicy::strict(), &HashMap::new(), &providers)
             .unwrap_err();
         assert!(err.to_string().contains("zone"), "got: {err}");
+    }
+
+    #[test]
+    fn reserved_failure_type_is_rejected() {
+        // "config"/"connection" are reserved for the engine's synthesized
+        // host-level failure results; a user resource type must not shadow them.
+        // Hard error under BOTH strict and lax policy - a shadowing name silently
+        // breaks exit-code classification, so lax must not tolerate it either.
+        for t in RESERVED_FAILURE_TYPES {
+            for policy in [ConfigPolicy::strict(), ConfigPolicy::lax()] {
+                let f = parse(&format!("[resource.{t}.thing]\nname = \"x\"\n"));
+                let err = validate_state_files(&[f], policy, &HashMap::new(), &HashMap::new())
+                    .unwrap_err();
+                assert!(err.to_string().contains("reserved"), "type {t}: got {err}");
+            }
+        }
     }
 
     fn same_dir(a: &std::path::Path, b: &std::path::Path) {

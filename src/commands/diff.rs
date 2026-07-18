@@ -27,7 +27,9 @@ pub async fn run(
     // diff succeeds with exit 0 when no changes (output with changes is still success),
     // and non-zero only on actual failures (connection errors etc.)
     if result.has_failures() {
-        if result.is_connection_only_failure() {
+        if result.is_config_only_failure() {
+            Ok(crate::error::exit_codes::INVALID_CONFIG)
+        } else if result.is_connection_only_failure() {
             Ok(crate::error::exit_codes::CONNECTION_ERROR)
         } else {
             Ok(crate::error::exit_codes::PARTIAL_FAILURE)

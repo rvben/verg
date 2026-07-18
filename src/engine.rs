@@ -68,10 +68,30 @@ impl EngineResult {
             })
     }
 
+    /// True when every host failed purely on config/parse (no host did real
+    /// work and every failure is a `config`-type resource). The actionable
+    /// signal is "the configuration is broken", which maps to exit 5 - not a
+    /// connectivity or resource-execution failure.
+    pub fn is_config_only_failure(&self) -> bool {
+        !self.summaries.is_empty()
+            && self.summaries.iter().all(|s| {
+                s.summary.failed > 0
+                    && s.summary.ok == 0
+                    && s.summary.changed == 0
+                    && s.resources
+                        .iter()
+                        .filter(|r| r.status == ResourceStatus::Failed)
+                        .all(|r| r.resource_type == "config")
+            })
+    }
+
     /// Compute the process exit code based on the run outcome.
     /// Failures take priority over changes.
     pub fn exit_code(&self) -> i32 {
         use crate::error::exit_codes;
+        if self.is_config_only_failure() {
+            return exit_codes::INVALID_CONFIG;
+        }
         if self.is_connection_only_failure() {
             return crate::error::exit_codes::CONNECTION_ERROR;
         }
@@ -314,7 +334,9 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                     Err(e) => RunSummary::from_results(
                         &host_name,
                         vec![ResourceResult {
-                            resource_type: "connection".into(),
+                            // Classify by error kind: a bundle/parse failure is a
+                            // config error, not a connection failure.
+                            resource_type: e.failure_kind().into(),
                             name: host_name.clone(),
                             status: ResourceStatus::Failed,
                             diff: None,
@@ -336,7 +358,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                     summaries.push(RunSummary::from_results(
                         "unknown",
                         vec![ResourceResult {
-                            resource_type: "connection".into(),
+                            resource_type: "internal".into(),
                             name: "task".into(),
                             status: ResourceStatus::Failed,
                             diff: None,
@@ -395,6 +417,18 @@ mod tests {
         };
         assert!(!r.is_connection_only_failure());
         assert_ne!(r.exit_code(), crate::error::exit_codes::CONNECTION_ERROR);
+    }
+
+    #[test]
+    fn config_only_failure_exits_invalid_config() {
+        // A config/parse failure (e.g. a missing $env var during bundle build)
+        // exits as INVALID_CONFIG, not as a connection error.
+        let r = EngineResult {
+            summaries: vec![failed_summary("a", "config")],
+        };
+        assert!(r.is_config_only_failure());
+        assert!(!r.is_connection_only_failure());
+        assert_eq!(r.exit_code(), crate::error::exit_codes::INVALID_CONFIG);
     }
 
     #[test]
