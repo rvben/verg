@@ -10,7 +10,12 @@ use std::collections::HashMap;
 ///   "fact.os == 'Ubuntu' && group.docker"
 ///   "fact.os == 'Ubuntu' || group.docker"
 ///
-/// Operator precedence (lowest to highest): `||` < `&&`. No parentheses support.
+/// Operator precedence (lowest to highest): `||` < `&&` < `!` < comparison.
+///
+/// Limitations (intentional, pinned by tests): there is no parenthesis support,
+/// so grouping is expressed by relying on precedence. A comparison against an
+/// absent fact is `false` (indeterminate is treated as "skip"), but `!` negates
+/// that literally, so `!fact.absent == 'x'` is `true`.
 pub fn evaluate(expr: &str, facts: &HashMap<String, String>) -> bool {
     let expr = expr.trim();
 
@@ -168,6 +173,76 @@ mod tests {
         // "false && false || true" must be true.
         assert!(evaluate(
             "group.monitoring && group.nonexistent || fact.os == 'Ubuntu'",
+            &facts()
+        ));
+    }
+
+    #[test]
+    fn whitespace_is_insensitive() {
+        assert!(evaluate("fact.arch=='x86_64'", &facts()));
+        assert!(evaluate("   fact.arch   ==   'x86_64'   ", &facts()));
+        assert!(evaluate("group.docker&&group.caddy", &facts()));
+        assert!(evaluate("!group.monitoring", &facts()));
+    }
+
+    #[test]
+    fn negation_binds_tighter_than_and_or() {
+        // !false && true => true ; !true && true => false
+        assert!(evaluate("!group.monitoring && group.docker", &facts()));
+        assert!(!evaluate("!group.docker && group.caddy", &facts()));
+        // !false || false => true ; negation applies only to its operand
+        assert!(evaluate("!group.monitoring || group.monitoring", &facts()));
+        // double negation
+        assert!(evaluate("!!group.docker", &facts()));
+    }
+
+    #[test]
+    fn negation_of_comparison_is_literal() {
+        // A comparison against an absent fact is false; `!` negates literally.
+        assert!(evaluate("!fact.absent == 'x'", &facts()));
+        assert!(!evaluate("!fact.os == 'Ubuntu'", &facts()));
+    }
+
+    #[test]
+    fn truthiness_edges() {
+        let mut f = facts();
+        f.insert("fact.zero".into(), "0".into());
+        f.insert("fact.no".into(), "false".into());
+        f.insert("fact.empty".into(), String::new());
+        f.insert("fact.word".into(), "lxc".into());
+        // "0", "false", and "" are falsy; any other non-empty value is truthy.
+        assert!(!evaluate("fact.zero", &f));
+        assert!(!evaluate("fact.no", &f));
+        assert!(!evaluate("fact.empty", &f));
+        assert!(evaluate("fact.word", &f));
+    }
+
+    #[test]
+    fn double_quotes_and_nested_operators_in_values() {
+        let mut f = facts();
+        f.insert("fact.msg".into(), "a && b || c".into());
+        // Double-quoted value; the &&/|| inside must not split the expression.
+        assert!(evaluate("fact.msg == \"a && b || c\"", &f));
+        assert!(!evaluate("fact.msg == \"a\"", &f));
+    }
+
+    #[test]
+    fn empty_expression_is_false() {
+        assert!(!evaluate("", &facts()));
+        assert!(!evaluate("    ", &facts()));
+    }
+
+    #[test]
+    fn deep_nesting_precedence() {
+        // a || b && c || d  ==  a || (b && c) || d
+        // group.docker(T) || group.monitoring(F) && ... || ...  => T
+        assert!(evaluate(
+            "group.docker || group.monitoring && group.nonexistent || group.nope",
+            &facts()
+        ));
+        // all-false chain
+        assert!(!evaluate(
+            "group.a && group.b || group.c && group.d",
             &facts()
         ));
     }
