@@ -4,6 +4,21 @@ use crate::error::Error;
 
 use super::{ResolvedResource, ResourceResult, run_checked, run_cmd};
 
+const START_ACTION: &str = "would start (containers not running)";
+const RECONCILE_ACTION: &str = "would reconcile via docker compose up -d";
+
+/// The dry-run action line for an `up` compose stack, given whether it is
+/// running and whether its files changed. `None` when `up -d` would be a no-op
+/// (a running stack whose files are unchanged), so a converged stack reports no
+/// change instead of a blanket "would start".
+fn planned_action(is_running: bool, files_changed: bool) -> Option<&'static str> {
+    match (is_running, files_changed) {
+        (false, _) => Some(START_ACTION),
+        (true, true) => Some(RECONCILE_ACTION),
+        (true, false) => None,
+    }
+}
+
 /// Manages Docker Compose services.
 ///
 /// Properties:
@@ -75,38 +90,41 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     let is_running =
         ps_output.status.success() && !String::from_utf8_lossy(&ps_output.stdout).trim().is_empty();
 
-    if !is_running || !changes.is_empty() {
+    let files_changed = !changes.is_empty();
+
+    if dry_run {
+        // Report precisely what `up -d` would do: start a down stack, reconcile
+        // a running one whose files changed, or nothing for a converged stack.
+        if let Some(action) = planned_action(is_running, files_changed) {
+            changes.push(action.to_string());
+        }
+    } else if !is_running || files_changed {
         if !is_running {
             changes.push("containers not running".to_string());
         }
-
-        if dry_run {
-            changes.push("would start".to_string());
-        } else {
-            // Pull images if requested
-            if pull {
-                run_checked(
-                    "docker",
-                    &["compose", "-f", &compose_path, "pull", "-q"],
-                    "docker compose pull",
-                )?;
-            }
-
-            // Start/restart the stack
+        // Pull images if requested
+        if pull {
             run_checked(
                 "docker",
-                &[
-                    "compose",
-                    "-f",
-                    &compose_path,
-                    "up",
-                    "-d",
-                    "--remove-orphans",
-                ],
-                "docker compose up",
+                &["compose", "-f", &compose_path, "pull", "-q"],
+                "docker compose pull",
             )?;
-            changes.push("started".to_string());
         }
+
+        // Start/restart the stack
+        run_checked(
+            "docker",
+            &[
+                "compose",
+                "-f",
+                &compose_path,
+                "up",
+                "-d",
+                "--remove-orphans",
+            ],
+            "docker compose up",
+        )?;
+        changes.push("started".to_string());
     }
 
     Ok(ResourceResult::from_changes(
@@ -163,5 +181,15 @@ mod tests {
             err.to_string().contains("requires 'project_dir'"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn planned_action_is_precise() {
+        // Down -> start; running + file change -> reconcile (not "start");
+        // running + no change -> nothing (a healthy converged stack is a no-op).
+        assert_eq!(planned_action(false, false), Some(START_ACTION));
+        assert_eq!(planned_action(false, true), Some(START_ACTION));
+        assert_eq!(planned_action(true, true), Some(RECONCILE_ACTION));
+        assert_eq!(planned_action(true, false), None);
     }
 }
