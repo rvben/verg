@@ -14,6 +14,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.8.0](https://github.com/rvben/verg/compare/v0.7.0...v0.8.0) - 2026-07-18
+
+### Added
+
+- **schema**: publish the full exit-code contract and clarify diff pagination ([32b1c49](https://github.com/rvben/verg/commit/32b1c4923651a83897b30845d41983f8648e4f6c))
+- **providers**: load, validate, and expose native providers control-side ([a3f53a6](https://github.com/rvben/verg/commit/a3f53a6d74ba7d4573c0866e13787c916bc419b1))
+- **providers**: carry provider defs in the bundle and dispatch them in the agent ([162db74](https://github.com/rvben/verg/commit/162db742f2ef927e43cd8dc96bd27bc4fdbf4b6f))
+- **providers**: add native provider executor with JSON-over-stdio protocol ([7e44612](https://github.com/rvben/verg/commit/7e446124fb96fa89cb972b8a3013b7a4c2922a6d))
+- **providers**: load native provider defs and embed source text ([c996901](https://github.com/rvben/verg/commit/c996901419b97950ef7d215c0237bb9044a2c459))
+- **inventory**: merge dynamic-inventory hosts in Inventory::load ([1c690a5](https://github.com/rvben/verg/commit/1c690a537bd1755c5e8f1433d2695293e311fa5e))
+- **inventory**: parse [inventory] command and run dynamic-inventory command ([cdb8734](https://github.com/rvben/verg/commit/cdb87343cb770a2b3395b8340b622965fa8649cd))
+- **secrets**: expose decrypted secrets to templates under secret.* and add --age-identity ([236ab08](https://github.com/rvben/verg/commit/236ab080636d791f2cc9030a741f0c31d99cfe84))
+- **secrets**: load and decrypt an age-encrypted secrets file ([2808014](https://github.com/rvben/verg/commit/28080149cc9f921d8cb0fda3cf14fc11f32f212c))
+- **resources**: add git resource (clone and checkout a ref) ([5bd3b14](https://github.com/rvben/verg/commit/5bd3b145927bddf105a3fb8746858ffacd2c9b28))
+- **resources**: add mount resource (fstab entry + mount state) ([a1de664](https://github.com/rvben/verg/commit/a1de66457d411db26eaf506eb6414f22d89d1841))
+- **resources**: add hostname and timezone resources ([e13a44b](https://github.com/rvben/verg/commit/e13a44bd9cc2143fcdf07df68e89b52af7196223))
+- **user**: update shell/home/groups on an existing user (idempotent) ([1616341](https://github.com/rvben/verg/commit/16163417def14778596e11654050f6f68a0532d2))
+- **agent**: add serve mode to pull and re-converge on a schedule ([00cd6e9](https://github.com/rvben/verg/commit/00cd6e980822913f81ca56b082bca9c749a9e507))
+- **agent**: write redacted run reports for serve mode ([0cc99db](https://github.com/rvben/verg/commit/0cc99dbf53250136bf5750dc44a68320ae014603))
+- **cli**: add verg publish to stage per-host bundles for pull-mode agents ([ccf12ab](https://github.com/rvben/verg/commit/ccf12abeacd77e53769dc59dfe593bb35b847abe))
+- **agent**: add a duration parser for serve intervals ([d9e984c](https://github.com/rvben/verg/commit/d9e984cd1596711f0a62e48da52b4a31a3bb618d))
+- **schema**: include custom resource types in schema output ([d43ba41](https://github.com/rvben/verg/commit/d43ba41f5242e796e22630d6deda226b1d6af36c))
+- **agent**: execute custom resources via a generic check/apply executor ([1785af1](https://github.com/rvben/verg/commit/1785af198ad6144a827a2726acb139799eca182d))
+- **bundle**: ship referenced custom resource definitions in the bundle ([592ceaa](https://github.com/rvben/verg/commit/592ceaab27c57665f0cf9ee4a54e27547a105da6))
+- **config**: validate custom resource instances against their definitions ([14b818a](https://github.com/rvben/verg/commit/14b818ac29460d72fbb76722a8c6738164392293))
+- **resources**: add ResourceDef type and loader for custom resource definitions ([8af78bb](https://github.com/rvben/verg/commit/8af78bb098e0111f3e2f2a09ab85f5407482127f))
+
+### Fixed
+
+- **cli**: discover the project root instead of assuming ./verg ([8faf145](https://github.com/rvben/verg/commit/8faf14550e35008d0eacf070f32ce73ee0378345))
+- **schema**: describe the actual {items, total} output envelope for apply/diff/check ([1e99be6](https://github.com/rvben/verg/commit/1e99be61d8fc654ac8c6b32ff74c9a554fccfdc6))
+- **changelog**: use sub-second resolution for apply-log filenames ([e588b65](https://github.com/rvben/verg/commit/e588b6529f158ff6e76150b55ca25d0440d2c335))
+- **transport**: shell-escape the agent version in the remote install command ([be1734c](https://github.com/rvben/verg/commit/be1734c3eb8a691a91109b09ac6337570175163d))
+- **cron,config**: reject control chars in cron commands; require vars to be a table ([ecd2010](https://github.com/rvben/verg/commit/ecd20100b399256d554ce9c8e1a076eed08b9602))
+- **when**: match operators only outside quotes so quoted values are literal ([815b57b](https://github.com/rvben/verg/commit/815b57b1de7b907258e187a88c8e3aeba20217c5))
+- **pkg**: report installed/removed packages in the apply diff, not only in dry-run ([67f39ea](https://github.com/rvben/verg/commit/67f39ea88cb4dc4e3916a9193edce5e2222dac21))
+- **inventory**: excluding an empty or unknown group excludes nothing ([6f7d0fb](https://github.com/rvben/verg/commit/6f7d0fbfbc47b4ec9da7d3f793befd0f221b637c))
+- **agent**: apply the unresolved-register guard to handlers too ([694e339](https://github.com/rvben/verg/commit/694e339a2a8b3629cdbb471faab69650ab5e0385))
+- **agent,download**: fail on unresolved registers in apply; never check metadata on a deleted download ([8300115](https://github.com/rvben/verg/commit/83001155c7413c3aff8fdd43ca3d62c53d95eccb))
+- **resources**: report mode drift accurately and stream-bound http bundle reads ([8f7da16](https://github.com/rvben/verg/commit/8f7da16b39477b69cfedd70488039d29fed02e48))
+- **resources**: never treat a read error as absent; atomic writes; bound pull-mode bundle ([57d3133](https://github.com/rvben/verg/commit/57d3133a6c6c8f0a0d0def316d1f4d0a3c4c956b))
+- **providers**: apply declared param defaults in native provider requests ([ca6c592](https://github.com/rvben/verg/commit/ca6c592de2c2d24af70b8fb43d21b857b2bfe5fd))
+- **providers**: convert provider params with clean datetime and no env expansion ([14e3c7f](https://github.com/rvben/verg/commit/14e3c7f2b66cfc88422f696cd5ceb8a2646f93e9))
+- **git**: dry-run compares the checkout to the ref locally so a converged repo reports no change ([700e3db](https://github.com/rvben/verg/commit/700e3dbd260b1f5c0d4cf385f63a286ea9e60880))
+- **mount**: abort on a non-NotFound /etc/fstab read error to avoid clobbering it ([2abf59d](https://github.com/rvben/verg/commit/2abf59d8e6b380dcbb8d3b06bd02091c077a9674))
+- **agent**: split duration unit on a char boundary to avoid a panic ([9f75637](https://github.com/rvben/verg/commit/9f756370659ce72dc5cf5cb2dbe962230a7093d2))
+- **e2e**: guard file existence in lineinfile check so it returns a clean 0/1 ([c3e1b8d](https://github.com/rvben/verg/commit/c3e1b8d347f2aaf31995e0094940c3809ef3f392))
+
 ## [0.7.0](https://github.com/rvben/verg/compare/v0.6.5...v0.7.0) - 2026-06-21
 
 ### Added
