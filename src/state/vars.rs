@@ -50,6 +50,11 @@ fn toml_to_json(value: &toml::Value) -> Result<serde_json::Value, Error> {
 pub fn create_env() -> minijinja::Environment<'static> {
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+    // Preserve a template's trailing newline. verg renders config files, not
+    // HTML; dropping the final newline (minijinja's default) makes a rendered
+    // file differ from an otherwise byte-identical on-disk file by one byte,
+    // which surfaces as a spurious change every run.
+    env.set_keep_trailing_newline(true);
     env.add_function("env", |name: String| -> Result<String, minijinja::Error> {
         std::env::var(&name).map_err(|_| {
             minijinja::Error::new(
@@ -131,6 +136,19 @@ mod tests {
         assert_eq!(
             render(&env, "{{ host }}:{{ port }}", &v).unwrap(),
             "localhost:3000"
+        );
+    }
+
+    #[test]
+    fn preserves_trailing_newline() {
+        // Config-file generation must not drop a template's trailing newline:
+        // a resource that compares rendered output to the on-disk file would
+        // otherwise report a spurious one-byte change on every run.
+        let env = create_env();
+        let v = vars(&[("name", toml::Value::String("web".into()))]);
+        assert_eq!(
+            render(&env, "server {{ name }}\n", &v).unwrap(),
+            "server web\n"
         );
     }
 
