@@ -87,6 +87,37 @@ pub fn load_hosts(path: &Path) -> Result<ParsedHosts, Error> {
 /// `vars` optional). `vars` values must be representable as TOML values (JSON
 /// `null` is rejected, since TOML has no null). Each returned host is validated
 /// with the same checks as static hosts.
+/// Linux/macOS errno for ETXTBSY ("text file busy"): the program file is open
+/// for writing somewhere.
+const ETXTBSY: i32 = 26;
+
+/// Run the command, retrying briefly on ETXTBSY. ETXTBSY happens when the program
+/// file is still open for writing - an inventory script being rewritten
+/// concurrently, or, in a multithreaded process, briefly held open by another
+/// thread's `fork` before its `exec` (the classic fork/exec race). It is
+/// transient, so a short bounded retry resolves it instead of failing the run.
+fn spawn_with_etxtbsy_retry(
+    program: &str,
+    args: &[String],
+    base_dir: &Path,
+) -> std::io::Result<std::process::Output> {
+    const MAX_ATTEMPTS: u32 = 5;
+    let mut attempt = 0;
+    loop {
+        match std::process::Command::new(program)
+            .args(args)
+            .current_dir(base_dir)
+            .output()
+        {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempt + 1 < MAX_ATTEMPTS => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20 * u64::from(attempt)));
+            }
+            other => return other,
+        }
+    }
+}
+
 pub fn run_inventory_command(
     cfg: &InventoryConfig,
     base_dir: &Path,
@@ -97,10 +128,7 @@ pub fn run_inventory_command(
         ));
     };
 
-    let output = std::process::Command::new(program)
-        .args(args)
-        .current_dir(base_dir)
-        .output()
+    let output = spawn_with_etxtbsy_retry(program, args, base_dir)
         .map_err(|e| Error::Config(format!("failed to run inventory command '{program}': {e}")))?;
 
     if !output.status.success() {
