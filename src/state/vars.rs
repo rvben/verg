@@ -2,19 +2,9 @@ use std::collections::HashMap;
 
 use crate::error::Error;
 
-/// Convert `toml::Value` vars to `serde_json::Value`, resolving any `$env.VAR`
-/// references in string values to the actual environment variable value.
-fn resolve_env_vars(
-    vars: &HashMap<String, toml::Value>,
-) -> Result<HashMap<String, serde_json::Value>, Error> {
-    let mut out = HashMap::new();
-    for (key, value) in vars {
-        let json_val = toml_to_json(value)?;
-        out.insert(key.clone(), json_val);
-    }
-    Ok(out)
-}
-
+/// Convert a single `toml::Value` to `serde_json::Value`, resolving a leading
+/// `$env.VAR` string reference to the actual environment variable value. Called
+/// lazily, only for the vars a template actually references.
 fn toml_to_json(value: &toml::Value) -> Result<serde_json::Value, Error> {
     match value {
         toml::Value::String(s) => {
@@ -87,14 +77,30 @@ pub fn render_with_globals(
     vars: &HashMap<String, toml::Value>,
     globals: &serde_json::Value,
 ) -> Result<String, Error> {
-    let mut context = resolve_env_vars(vars)?;
-    if let serde_json::Value::Object(map) = globals {
-        for (k, v) in map {
-            // Insert only if not already set — host vars take precedence
-            context.entry(k.clone()).or_insert_with(|| v.clone());
+    let tmpl = env
+        .template_from_str(template)
+        .map_err(|e| Error::Parse(format!("template error: {e}")))?;
+
+    // Resolve only the variables the template actually references. A missing
+    // `$env.` secret in an UNRELATED var must not fail an unrelated render (e.g.
+    // a read-only diff of a host whose other group needs a secret you lack); a
+    // referenced missing secret still errors below, as it must.
+    let referenced = tmpl.undeclared_variables(false);
+    let globals_map = match globals {
+        serde_json::Value::Object(map) => Some(map),
+        _ => None,
+    };
+    let mut context = serde_json::Map::new();
+    for name in &referenced {
+        // Host vars take precedence over globals (e.g. inventory).
+        if let Some(tv) = vars.get(name) {
+            context.insert(name.clone(), toml_to_json(tv)?);
+        } else if let Some(gv) = globals_map.and_then(|m| m.get(name)) {
+            context.insert(name.clone(), gv.clone());
         }
     }
-    env.render_str(template, &context)
+
+    tmpl.render(serde_json::Value::Object(context))
         .map_err(|e| Error::Parse(format!("template error: {e}")))
 }
 
@@ -188,6 +194,37 @@ mod tests {
         )]);
         assert_eq!(render(&env, "key={{ api_key }}", &v).unwrap(), "key=s3cret");
         unsafe { std::env::remove_var("VERG_TEST_SECRET") };
+    }
+
+    #[test]
+    fn unreferenced_missing_env_var_does_not_fail_render() {
+        // A missing $env secret in a var the template never references must not
+        // fail the render - otherwise a read-only diff of a host breaks just
+        // because an unrelated group var needs a secret you don't have.
+        let env = create_env();
+        let v = vars(&[
+            ("name", toml::Value::String("web".into())),
+            (
+                "secret",
+                toml::Value::String("$env.VERG_DEFINITELY_UNSET_XYZ".into()),
+            ),
+        ]);
+        assert_eq!(render(&env, "pkg: {{ name }}", &v).unwrap(), "pkg: web");
+    }
+
+    #[test]
+    fn referenced_missing_env_var_still_errors() {
+        // But a secret the template DOES reference must still fail loudly.
+        let env = create_env();
+        let v = vars(&[(
+            "secret",
+            toml::Value::String("$env.VERG_DEFINITELY_UNSET_XYZ".into()),
+        )]);
+        let err = render(&env, "key={{ secret }}", &v).unwrap_err();
+        assert!(
+            err.to_string().contains("VERG_DEFINITELY_UNSET_XYZ"),
+            "got: {err}"
+        );
     }
 
     #[test]
