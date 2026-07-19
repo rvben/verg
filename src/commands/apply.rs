@@ -10,8 +10,9 @@ use crate::output::OutputConfig;
 pub async fn run(
     engine: &Engine,
     base_dir: &Path,
-    targets: &str,
+    targets: Option<&str>,
     yes: bool,
+    plan: Option<&Path>,
     output: &OutputConfig,
     cancel: Arc<AtomicBool>,
 ) -> Result<i32, Error> {
@@ -19,6 +20,36 @@ pub async fn run(
         return Err(Error::ConfirmationRequired(
             "apply modifies infrastructure; pass --yes to confirm non-interactively".into(),
         ));
+    }
+    // A saved plan carries the targets it was reviewed against; use them unless
+    // the caller overrides with --targets. Without either, targets are required
+    // (no default) so an apply can never fan out to every host by accident.
+    let saved = match plan {
+        Some(p) => Some(crate::commands::plan::load(p)?),
+        None => None,
+    };
+    let targets = match (targets, &saved) {
+        (Some(t), _) => t,
+        (None, Some(s)) => s.targets.as_str(),
+        (None, None) => {
+            return Err(Error::Config(
+                "apply requires --targets (or --plan, which carries its targets)".into(),
+            ));
+        }
+    };
+
+    // When applying a saved plan, recompute the diff and refuse if the pending
+    // changes drifted from what the plan captured - so apply does exactly what
+    // was reviewed.
+    if let Some(saved) = &saved {
+        let dry = engine
+            .run_cancellable(base_dir, targets, true, cancel.clone())
+            .await?;
+        if crate::commands::plan::is_stale(saved, &dry.summaries) {
+            return Err(Error::Conflict(
+                "plan is stale: the pending changes differ from when it was created; re-run `verg plan`".into(),
+            ));
+        }
     }
     let result = engine
         .run_cancellable(base_dir, targets, false, cancel)

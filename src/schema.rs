@@ -32,7 +32,8 @@ pub fn run(
                 "description": "Converge targets to desired state",
                 "mutating": true,
                 "args": [
-                    {"name": "--targets", "type": "string", "required": true, "description": "Target pattern to match hosts"}
+                    {"name": "--targets", "type": "string", "required": false, "description": "Target pattern to match hosts; required unless --plan is given (which carries its targets)"},
+                    {"name": "--plan", "type": "path", "description": "Apply a saved plan; refuses (exit 8) if the diff drifted since planning"}
                 ],
                 "output_fields": [
                     {"name": "items", "type": "array", "description": "Per-host results; each item is an object with host (string), resources (array), and summary (object with ok/changed/failed/skipped counts)"},
@@ -66,6 +67,21 @@ pub fn run(
                 "output_fields": [
                     {"name": "items", "type": "array", "description": "Per-host results; each item is an object with host (string), resources (array), and summary (object with ok/changed/failed/skipped counts)"},
                     {"name": "total", "type": "integer", "description": "Number of hosts in the result"}
+                ]
+            },
+            {
+                "name": "plan",
+                "description": "Compute a diff and save it as a reviewable plan for apply --plan",
+                "mutating": false,
+                "args": [
+                    {"name": "--targets", "type": "string", "required": false, "default": "all", "description": "Target pattern to match hosts (default: all)"},
+                    {"name": "--out", "type": "path", "required": true, "description": "File to write the plan to"}
+                ],
+                "output_fields": [
+                    {"name": "plan", "type": "string", "description": "Path the plan was written to"},
+                    {"name": "hosts", "type": "integer"},
+                    {"name": "changed", "type": "integer"},
+                    {"name": "failed", "type": "integer"}
                 ]
             },
             {

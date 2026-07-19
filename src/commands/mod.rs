@@ -3,4 +3,5 @@ pub mod check;
 pub mod diff;
 pub mod init;
 pub mod lint;
+pub mod plan;
 pub mod publish;

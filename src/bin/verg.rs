@@ -80,9 +80,21 @@ struct Cli {
 enum Command {
     /// Converge targets to desired state
     Apply {
-        /// Hosts/groups to converge (e.g. all, web, prod:!db). Required - no default, to prevent accidental mass applies.
+        /// Hosts/groups to converge (e.g. all, web, prod:!db). Required unless --plan is given (which carries its targets); no default, to prevent accidental mass applies.
         #[arg(long, short)]
+        targets: Option<String>,
+        /// Apply a saved plan (from `verg plan`); refuses if the diff drifted since planning
+        #[arg(long)]
+        plan: Option<PathBuf>,
+    },
+    /// Compute a diff and save it as a reviewable plan for `apply --plan`
+    Plan {
+        /// Target pattern to match hosts (default: all)
+        #[arg(long, short, default_value = "all")]
         targets: String,
+        /// File to write the plan to
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Show what would change without applying
     Diff {
@@ -237,10 +249,24 @@ async fn run(
     };
 
     match cli.command {
-        Command::Apply { targets } => {
+        Command::Apply { targets, plan } => {
             let base_dir = resolve_project_dir(cli.path.clone())?;
             let engine = build_engine(engine_config)?;
-            commands::apply::run(&engine, &base_dir, &targets, cli.yes, output, cancel).await
+            commands::apply::run(
+                &engine,
+                &base_dir,
+                targets.as_deref(),
+                cli.yes,
+                plan.as_deref(),
+                output,
+                cancel,
+            )
+            .await
+        }
+        Command::Plan { targets, out } => {
+            let base_dir = resolve_project_dir(cli.path.clone())?;
+            let engine = build_engine(engine_config)?;
+            commands::plan::run(&engine, &base_dir, &targets, &out, output, cancel).await
         }
         Command::Diff {
             targets,

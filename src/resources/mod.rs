@@ -87,7 +87,7 @@ pub enum ResourceStatus {
 
 /// What happened to a single field of a resource. `create`/`delete` are keyed by
 /// which of from/to is absent; `update` has both.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ChangeAction {
     Create,
@@ -139,7 +139,7 @@ impl FieldChange {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ResourceResult {
     #[serde(rename = "type")]
     pub resource_type: String,
@@ -160,14 +160,14 @@ pub struct ResourceResult {
     pub changes: Vec<FieldChange>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunSummary {
     pub host: String,
     pub resources: Vec<ResourceResult>,
     pub summary: SummaryCount,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SummaryCount {
     pub changed: usize,
     pub ok: usize,
