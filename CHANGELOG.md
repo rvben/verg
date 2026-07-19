@@ -15,6 +15,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.8.1](https://github.com/rvben/verg/compare/v0.8.0...v0.8.1) - 2026-07-19
+
+### Added
+
+- **plan**: reviewable plan artifact + drift-gated apply ([959be03](https://github.com/rvben/verg/commit/959be030e191ad9f2103a123de98374b7ea63d76))
+- **diff**: structured field-level changes on ResourceResult ([f2dc18e](https://github.com/rvben/verg/commit/f2dc18e75ede4333fda4dcc169c861f6ea644577))
+- **lint**: add 'verg lint' to audit $env secret references ([55dcf01](https://github.com/rvben/verg/commit/55dcf010affd634e246d0f94dd177d55b7d953b5))
+- **facts**: gather fact.virt (systemd-detect-virt) ([5577d1c](https://github.com/rvben/verg/commit/5577d1cdfb0e431dc672e91e4ff1a48c0b096609))
+
+### Fixed
+
+- **docker_compose**: precise dry-run action; no-op when converged ([df90e7e](https://github.com/rvben/verg/commit/df90e7e5afaac8380a7d1f88207d5513f2027552))
+- **engine**: classify per-host bundle failures by error kind ([767c862](https://github.com/rvben/verg/commit/767c862fae7c218d5c2e7ed9303d3c823b501da2))
+- **templates**: preserve trailing newline when rendering ([baaae13](https://github.com/rvben/verg/commit/baaae136b0753c1d842b2dc79ff955c7c6728f27))
+
+### Performance
+
+- **secrets**: resolve $env references lazily, only for referenced vars ([29f9e77](https://github.com/rvben/verg/commit/29f9e771475f74236b4edf4ef8e542285a19d678))
+
 ## [0.8.0](https://github.com/rvben/verg/compare/v0.7.0...v0.8.0) - 2026-07-18
 
 ### Added
