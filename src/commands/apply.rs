@@ -113,6 +113,7 @@ mod tests {
                     to: None,
                     error: None,
                     output: None,
+                    changes: Vec::new(),
                 }],
             )],
         }
@@ -129,6 +130,7 @@ mod tests {
             to: None,
             error: None,
             output: None,
+            changes: Vec::new(),
         };
         let line = format_resource_line("web1", &r, false);
         assert!(

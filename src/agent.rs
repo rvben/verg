@@ -408,6 +408,7 @@ fn execute_notify_shorthand(target: &str, dry_run: bool) -> ResourceResult {
             to: None,
             output: None,
             error: Some(format!("invalid service name: {svc}")),
+            changes: Vec::new(),
         };
     }
 
@@ -424,6 +425,7 @@ fn execute_notify_shorthand(target: &str, dry_run: bool) -> ResourceResult {
                     to: None,
                     output: None,
                     error: Some(e),
+                    changes: Vec::new(),
                 };
             }
         }
@@ -440,6 +442,7 @@ fn execute_notify_shorthand(target: &str, dry_run: bool) -> ResourceResult {
             to: None,
             output: None,
             error: None,
+            changes: Vec::new(),
         };
     }
 
@@ -453,6 +456,7 @@ fn execute_notify_shorthand(target: &str, dry_run: bool) -> ResourceResult {
             to: None,
             output: None,
             error: None,
+            changes: Vec::new(),
         },
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -465,6 +469,7 @@ fn execute_notify_shorthand(target: &str, dry_run: bool) -> ResourceResult {
                 to: None,
                 output: None,
                 error: Some(format!("notify failed: {stderr}")),
+                changes: Vec::new(),
             }
         }
         Err(e) => ResourceResult {
@@ -476,6 +481,7 @@ fn execute_notify_shorthand(target: &str, dry_run: bool) -> ResourceResult {
             to: None,
             output: None,
             error: Some(format!("notify failed: {e}")),
+            changes: Vec::new(),
         },
     }
 }
@@ -534,6 +540,7 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                     to: None,
                     output: None,
                     error: Some(format!("when: {when_expr}")),
+                    changes: Vec::new(),
                 });
                 continue;
             }
@@ -550,6 +557,7 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                     to: None,
                     output: None,
                     error: Some("dependency failed".into()),
+                    changes: Vec::new(),
                 });
                 failed_fqns.insert(resource.fqn());
                 continue;
@@ -574,6 +582,7 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                         to: None,
                         output: None,
                         error: None,
+                        changes: Vec::new(),
                     });
                     continue;
                 }
@@ -670,6 +679,7 @@ pub fn execute_bundle(bundle: Bundle, dry_run: bool) -> Result<RunSummary, Error
                     to: None,
                     output: None,
                     error: Some(format!("handler dependency error: {e}")),
+                    changes: Vec::new(),
                 });
             }
         }

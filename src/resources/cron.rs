@@ -231,6 +231,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 to: None,
                 error: None,
                 output: None,
+                changes: Vec::new(),
             });
         }
         std::fs::remove_file(target)
@@ -244,6 +245,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             to: None,
             error: None,
             output: None,
+            changes: Vec::new(),
         });
     }
 
@@ -310,6 +312,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             to: Some(desired),
             error: None,
             output: None,
+            changes: Vec::new(),
         });
     }
 
@@ -337,6 +340,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         to: Some(desired),
         error: None,
         output: None,
+        changes: Vec::new(),
     })
 }
 

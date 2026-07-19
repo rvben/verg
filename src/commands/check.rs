@@ -66,6 +66,7 @@ mod tests {
                 to: None,
                 error: Some("e".into()),
                 output: None,
+                changes: Vec::new(),
             })
             .collect();
         RunSummary::from_results(host, resources)

@@ -40,10 +40,12 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     }
 
     let mut changes = Vec::new();
+    let mut field_changes: Vec<super::FieldChange> = Vec::new();
 
     // Ensure project directory exists
     if !Path::new(project_dir).exists() {
         changes.push(format!("create {project_dir}"));
+        field_changes.push(super::FieldChange::create("project_dir", project_dir));
         if !dry_run {
             std::fs::create_dir_all(project_dir)
                 .map_err(|e| Error::Resource(format!("failed to create {project_dir}: {e}")))?;
@@ -56,6 +58,16 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
         if current.as_deref() != Some(content) {
             changes.push("compose file updated".to_string());
+            field_changes.push(super::FieldChange {
+                field: "compose_file".to_string(),
+                action: if current.is_none() {
+                    super::ChangeAction::Create
+                } else {
+                    super::ChangeAction::Update
+                },
+                from: None,
+                to: None,
+            });
             if !dry_run {
                 crate::resources::atomic::write_atomic(
                     Path::new(&compose_path),
@@ -74,6 +86,16 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
         if current.as_deref() != Some(env_content) {
             changes.push(".env updated".to_string());
+            field_changes.push(super::FieldChange {
+                field: "env_file".to_string(),
+                action: if current.is_none() {
+                    super::ChangeAction::Create
+                } else {
+                    super::ChangeAction::Update
+                },
+                from: None,
+                to: None,
+            });
             if !dry_run {
                 crate::resources::atomic::write_atomic(
                     Path::new(&env_path),
@@ -92,13 +114,29 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
     let files_changed = !changes.is_empty();
 
+    // A stack transition (start when down, reconcile when a running stack's files
+    // changed) is a change even when no file was rewritten; record it structurally
+    // so machine consumers see it, not just the human diff.
+    let stack_change = |is_running: bool| super::FieldChange {
+        field: "stack".to_string(),
+        action: if is_running {
+            super::ChangeAction::Update
+        } else {
+            super::ChangeAction::Create
+        },
+        from: None,
+        to: None,
+    };
+
     if dry_run {
         // Report precisely what `up -d` would do: start a down stack, reconcile
         // a running one whose files changed, or nothing for a converged stack.
         if let Some(action) = planned_action(is_running, files_changed) {
             changes.push(action.to_string());
+            field_changes.push(stack_change(is_running));
         }
     } else if !is_running || files_changed {
+        field_changes.push(stack_change(is_running));
         if !is_running {
             changes.push("containers not running".to_string());
         }
@@ -127,11 +165,10 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         changes.push("started".to_string());
     }
 
-    Ok(ResourceResult::from_changes(
-        "docker_compose",
-        resource.name.clone(),
-        &changes,
-    ))
+    Ok(
+        ResourceResult::from_changes("docker_compose", resource.name.clone(), &changes)
+            .with_changes(field_changes),
+    )
 }
 
 fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult, Error> {
@@ -144,12 +181,12 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
         return Ok(ResourceResult::ok("docker_compose", name.to_string()));
     }
 
+    let stop_change = vec![super::FieldChange::delete("stack", name)];
     if dry_run {
-        return Ok(ResourceResult::changed(
-            "docker_compose",
-            name.to_string(),
-            "would stop",
-        ));
+        return Ok(
+            ResourceResult::changed("docker_compose", name.to_string(), "would stop")
+                .with_changes(stop_change),
+        );
     }
 
     run_checked(
@@ -158,11 +195,10 @@ fn stop(compose_path: &str, name: &str, dry_run: bool) -> Result<ResourceResult,
         "docker compose down",
     )?;
 
-    Ok(ResourceResult::changed(
-        "docker_compose",
-        name.to_string(),
-        "stopped",
-    ))
+    Ok(
+        ResourceResult::changed("docker_compose", name.to_string(), "stopped")
+            .with_changes(stop_change),
+    )
 }
 
 #[cfg(test)]

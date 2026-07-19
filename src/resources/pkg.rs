@@ -120,6 +120,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     };
 
     let mut changes = Vec::new();
+    let mut field_changes: Vec<super::FieldChange> = Vec::new();
     let mut cache_updated = false;
 
     for name in &names {
@@ -129,6 +130,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 // Record the change for BOTH dry-run and apply so an applied
                 // install is reported in the diff, not just planned.
                 changes.push(format!("+{name}"));
+                field_changes.push(super::FieldChange::create("package", name.clone()));
                 if !dry_run {
                     if !cache_updated {
                         update_cache(&mgr)?;
@@ -139,6 +141,7 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             }
             ("absent", true) => {
                 changes.push(format!("-{name}"));
+                field_changes.push(super::FieldChange::delete("package", name.clone()));
                 if !dry_run {
                     remove(&mgr, name)?;
                 }
@@ -147,11 +150,10 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         }
     }
 
-    Ok(ResourceResult::from_changes(
-        "pkg",
-        resource.name.clone(),
-        &changes,
-    ))
+    Ok(
+        ResourceResult::from_changes("pkg", resource.name.clone(), &changes)
+            .with_changes(field_changes),
+    )
 }
 
 #[cfg(test)]

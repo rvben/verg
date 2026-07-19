@@ -250,6 +250,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                             to: None,
                             output: None,
                             error: Some("cancelled before start".into()),
+                            changes: Vec::new(),
                         }],
                     );
                 }
@@ -344,6 +345,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                             to: None,
                             output: None,
                             error: Some(e.to_string()),
+                            changes: Vec::new(),
                         }],
                     ),
                 }
@@ -366,6 +368,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                             to: None,
                             output: None,
                             error: Some(format!("task join error: {e}")),
+                            changes: Vec::new(),
                         }],
                     ));
                 }
@@ -394,6 +397,7 @@ mod tests {
                 to: None,
                 output: None,
                 error: Some("boom".into()),
+                changes: Vec::new(),
             }],
         )
     }
@@ -446,6 +450,7 @@ mod tests {
                 to: None,
                 output: None,
                 error: None,
+                changes: Vec::new(),
             }],
         );
         let r = EngineResult {
@@ -654,6 +659,7 @@ mod tests {
                             to: None,
                             output: None,
                             error: None,
+                            changes: Vec::new(),
                         });
                     }
                     for i in 0..ok {
@@ -666,6 +672,7 @@ mod tests {
                             to: None,
                             output: None,
                             error: None,
+                            changes: Vec::new(),
                         });
                     }
                     for i in 0..failed {
@@ -678,6 +685,7 @@ mod tests {
                             to: None,
                             output: None,
                             error: Some("mock failure".into()),
+                            changes: Vec::new(),
                         });
                     }
                     let summary = RunSummary::from_results(conn.address, results);

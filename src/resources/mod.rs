@@ -75,16 +75,71 @@ pub fn parse_octal_mode(mode: &str) -> Result<u32, Error> {
     u32::from_str_radix(mode, 8).map_err(|_| Error::Resource(format!("invalid mode: {mode}")))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ResourceStatus {
+    #[default]
     Ok,
     Changed,
     Failed,
     Skipped,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// What happened to a single field of a resource. `create`/`delete` are keyed by
+/// which of from/to is absent; `update` has both.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeAction {
+    Create,
+    Update,
+    Delete,
+}
+
+/// A structured, machine-consumable field-level change. Populated by resources
+/// alongside the human-readable `diff` string, so consumers (and `plan`) can
+/// reason about exactly what changed without parsing prose.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FieldChange {
+    pub field: String,
+    pub action: ChangeAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+}
+
+impl FieldChange {
+    pub fn create(field: impl Into<String>, to: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
+            action: ChangeAction::Create,
+            from: None,
+            to: Some(to.into()),
+        }
+    }
+    pub fn update(
+        field: impl Into<String>,
+        from: impl Into<String>,
+        to: impl Into<String>,
+    ) -> Self {
+        Self {
+            field: field.into(),
+            action: ChangeAction::Update,
+            from: Some(from.into()),
+            to: Some(to.into()),
+        }
+    }
+    pub fn delete(field: impl Into<String>, from: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
+            action: ChangeAction::Delete,
+            from: Some(from.into()),
+            to: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResourceResult {
     #[serde(rename = "type")]
     pub resource_type: String,
@@ -100,6 +155,9 @@ pub struct ResourceResult {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    /// Structured per-field changes (machine-readable companion to `diff`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<FieldChange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,11 +263,7 @@ impl ResourceResult {
             resource_type: resource_type.into(),
             name: name.into(),
             status: ResourceStatus::Ok,
-            diff: None,
-            from: None,
-            to: None,
-            error: None,
-            output: None,
+            ..Default::default()
         }
     }
 
@@ -224,11 +278,14 @@ impl ResourceResult {
             name: name.into(),
             status: ResourceStatus::Changed,
             diff: Some(diff.into()),
-            from: None,
-            to: None,
-            error: None,
-            output: None,
+            ..Default::default()
         }
+    }
+
+    /// Attach structured field-level changes to this result (builder style).
+    pub fn with_changes(mut self, changes: Vec<FieldChange>) -> Self {
+        self.changes = changes;
+        self
     }
 
     /// Build an Ok result when `changes` is empty, otherwise a Changed result
@@ -255,11 +312,8 @@ impl ResourceResult {
             resource_type: resource_type.into(),
             name: name.into(),
             status: ResourceStatus::Failed,
-            diff: None,
-            from: None,
-            to: None,
             error: Some(error.into()),
-            output: None,
+            ..Default::default()
         }
     }
 }
@@ -317,6 +371,16 @@ pub fn redact_result(mut result: ResourceResult, sensitive: bool) -> ResourceRes
         result.output = None;
         if result.diff.is_some() {
             result.diff = Some("[redacted]".into());
+        }
+        // Structured changes carry the same values as diff/from/to and must be
+        // redacted too. Keep field/action (the shape) but hide the values.
+        for change in &mut result.changes {
+            if change.from.is_some() {
+                change.from = Some("[redacted]".into());
+            }
+            if change.to.is_some() {
+                change.to = Some("[redacted]".into());
+            }
         }
     }
     result
@@ -537,6 +601,7 @@ mod tests {
             to: Some("new secret".into()),
             error: None,
             output: Some("captured secret".into()),
+            changes: vec![FieldChange::update("mode", "0644", "0600")],
         };
         let red = redact_result(r, true);
         assert_eq!(red.status, ResourceStatus::Changed);
@@ -544,6 +609,10 @@ mod tests {
         assert!(red.to.is_none());
         assert!(red.output.is_none());
         assert_eq!(red.diff.as_deref(), Some("[redacted]"));
+        // Structured changes must not leak values either (shape is kept).
+        assert_eq!(red.changes[0].field, "mode");
+        assert_eq!(red.changes[0].from.as_deref(), Some("[redacted]"));
+        assert_eq!(red.changes[0].to.as_deref(), Some("[redacted]"));
     }
 
     #[test]
@@ -557,6 +626,7 @@ mod tests {
             to: None,
             error: None,
             output: Some("o".into()),
+            changes: Vec::new(),
         };
         let red = redact_result(r, false);
         assert_eq!(red.diff.as_deref(), Some("d"));
@@ -575,6 +645,7 @@ mod tests {
                 to: None,
                 error: None,
                 output: None,
+                changes: Vec::new(),
             },
             ResourceResult {
                 resource_type: "file".into(),
@@ -585,6 +656,7 @@ mod tests {
                 to: None,
                 error: None,
                 output: None,
+                changes: Vec::new(),
             },
             ResourceResult {
                 resource_type: "service".into(),
@@ -595,6 +667,7 @@ mod tests {
                 to: None,
                 error: Some("not found".into()),
                 output: None,
+                changes: Vec::new(),
             },
         ];
         let summary = RunSummary::from_results("web1", results);

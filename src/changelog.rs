@@ -22,6 +22,12 @@ pub fn redact_for_changelog(summaries: &[RunSummary]) -> Vec<RunSummary> {
                     r.from = None;
                     r.to = None;
                     r.output = None;
+                    // Structured changes carry the same bodies; drop their
+                    // from/to too, keeping only field/action.
+                    for c in &mut r.changes {
+                        c.from = None;
+                        c.to = None;
+                    }
                     if let Some(d) = &r.diff
                         && d.len() > 200
                     {
@@ -119,6 +125,7 @@ mod tests {
                 to: Some("new secret body".into()),
                 error: None,
                 output: Some("captured".into()),
+                changes: Vec::new(),
             }],
         )];
         let red = super::redact_for_changelog(&summaries);
@@ -145,6 +152,7 @@ mod tests {
                 to: Some("new content".into()),
                 error: None,
                 output: Some("captured output".into()),
+                changes: Vec::new(),
             }],
         );
 
@@ -200,6 +208,7 @@ mod tests {
                 to: None,
                 error: None,
                 output: None,
+                changes: Vec::new(),
             }],
         )];
 

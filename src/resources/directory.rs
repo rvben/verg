@@ -25,12 +25,14 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         if !target.exists() {
             return Ok(ResourceResult::ok("directory", resource.name.clone()));
         }
+        let removal = vec![super::FieldChange::delete("directory", path)];
         if dry_run {
             return Ok(ResourceResult::changed(
                 "directory",
                 resource.name.clone(),
                 format!("would remove {path}"),
-            ));
+            )
+            .with_changes(removal));
         }
         std::fs::remove_dir_all(target)
             .map_err(|e| Error::Resource(format!("failed to remove {path}: {e}")))?;
@@ -38,14 +40,17 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
             "directory",
             resource.name.clone(),
             format!("removed {path}"),
-        ));
+        )
+        .with_changes(removal));
     }
 
     let mut changes = Vec::new();
+    let mut field_changes: Vec<super::FieldChange> = Vec::new();
 
     // Create directory if missing
     if !target.exists() {
         changes.push(format!("create {path}"));
+        field_changes.push(super::FieldChange::create("directory", path));
         if !dry_run {
             std::fs::create_dir_all(target)
                 .map_err(|e| Error::Resource(format!("failed to create {path}: {e}")))?;
@@ -63,6 +68,11 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 & 0o7777;
             if current_mode != desired_mode {
                 changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
+                field_changes.push(super::FieldChange::update(
+                    "mode",
+                    format!("{current_mode:04o}"),
+                    format!("{desired_mode:04o}"),
+                ));
                 if !dry_run {
                     std::fs::set_permissions(target, std::fs::Permissions::from_mode(desired_mode))
                         .map_err(|e| Error::Resource(format!("failed to chmod {path}: {e}")))?;
@@ -109,6 +119,13 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
 
         if let Some(arg) = ownership_action(owner, owner_matches, group, group_matches) {
             changes.push(format!("owner/group -> {arg}"));
+            // The directory already exists; ownership is being updated, not created.
+            field_changes.push(super::FieldChange {
+                field: "owner_group".to_string(),
+                action: super::ChangeAction::Update,
+                from: None,
+                to: Some(arg.clone()),
+            });
             if !dry_run {
                 let mut args = vec![];
                 if recurse {
@@ -121,11 +138,10 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         }
     }
 
-    Ok(ResourceResult::from_changes(
-        "directory",
-        resource.name.clone(),
-        &changes,
-    ))
+    Ok(
+        ResourceResult::from_changes("directory", resource.name.clone(), &changes)
+            .with_changes(field_changes),
+    )
 }
 
 /// Try to parse a string as a numeric UID.

@@ -3,13 +3,18 @@ use std::path::Path;
 
 use crate::error::Error;
 
-use super::{ResolvedResource, ResourceResult, parse_octal_mode, run_checked, run_cmd};
+use super::{
+    ChangeAction, FieldChange, ResolvedResource, ResourceResult, parse_octal_mode, run_checked,
+    run_cmd,
+};
 
 pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceResult, Error> {
     let path = resource.prop_str_required("path")?;
 
     let target = Path::new(path);
     let mut changes = Vec::new();
+    // Structured companion to `changes`, populated in parallel.
+    let mut field_changes: Vec<FieldChange> = Vec::new();
 
     let desired_content =
         if let Some(content) = resource.props.get("content").and_then(|v| v.as_str()) {
@@ -53,6 +58,18 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         let current = crate::resources::read_current(target)?;
         if current.as_deref() != Some(desired.as_str()) {
             changes.push("content".to_string());
+            // Content bodies can be large, so record the structural change
+            // without the full before/after payload.
+            field_changes.push(FieldChange {
+                field: "content".to_string(),
+                action: if current.is_none() {
+                    ChangeAction::Create
+                } else {
+                    ChangeAction::Update
+                },
+                from: None,
+                to: None,
+            });
             if !dry_run {
                 if let Some(parent) = target.parent() {
                     std::fs::create_dir_all(parent)
@@ -70,6 +87,11 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
     // when no content write happened (mode-only drift on an unchanged file).
     if let Some((current_mode, desired_mode)) = mode_drift {
         changes.push(format!("mode {current_mode:04o} → {desired_mode:04o}"));
+        field_changes.push(FieldChange::update(
+            "mode",
+            format!("{current_mode:04o}"),
+            format!("{desired_mode:04o}"),
+        ));
         if !dry_run && !content_written {
             std::fs::set_permissions(target, std::fs::Permissions::from_mode(desired_mode))
                 .map_err(|e| Error::Resource(format!("failed to chmod {path}: {e}")))?;
@@ -85,17 +107,17 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         let current_owner = ls_line.split_whitespace().nth(2).unwrap_or("");
         if current_owner != owner {
             changes.push(format!("owner {current_owner} → {owner}"));
+            field_changes.push(FieldChange::update("owner", current_owner, owner));
             if !dry_run {
                 run_checked("chown", &[owner, path], "chown")?;
             }
         }
     }
 
-    Ok(ResourceResult::from_changes(
-        "file",
-        resource.name.clone(),
-        &changes,
-    ))
+    Ok(
+        ResourceResult::from_changes("file", resource.name.clone(), &changes)
+            .with_changes(field_changes),
+    )
 }
 
 #[cfg(test)]
@@ -141,6 +163,35 @@ mod tests {
         // Second apply is a no-op (Ok), proving idempotency.
         let second = execute(&r, false).unwrap();
         assert_eq!(second.status, ResourceStatus::Ok);
+    }
+
+    #[test]
+    fn emits_structured_field_changes() {
+        // A new file with content + mode yields structured changes a consumer can
+        // read without parsing the human diff string.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("app.conf");
+        let mut props = HashMap::new();
+        props.insert(
+            "path".into(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        );
+        props.insert("content".into(), toml::Value::String("hello\n".into()));
+        props.insert("mode".into(), toml::Value::String("0640".into()));
+        let result = execute(&resource("app", props), true).unwrap();
+
+        let content = result
+            .changes
+            .iter()
+            .find(|c| c.field == "content")
+            .expect("content change");
+        assert_eq!(content.action, ChangeAction::Create);
+        // Mode drift carries the concrete before/after.
+        let mode = result.changes.iter().find(|c| c.field == "mode");
+        if let Some(m) = mode {
+            assert_eq!(m.action, ChangeAction::Update);
+            assert_eq!(m.to.as_deref(), Some("0640"));
+        }
     }
 
     #[test]
