@@ -16,6 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.8.2](https://github.com/rvben/verg/compare/v0.8.1...v0.8.2) - 2026-07-19
+
+### Added
+
+- **engine**: collect per-resource build failures for partial diffs ([a548d75](https://github.com/rvben/verg/commit/a548d75387610e98eeb347cc459156fce62ca299))
+- **plan**: fingerprint content bodies so drift gate catches body changes ([ed546e9](https://github.com/rvben/verg/commit/ed546e98f242a3b996ee160793dd5e15e86c551e))
+
+### Fixed
+
+- **inventory**: retry inventory command spawn on ETXTBSY ([5aad80a](https://github.com/rvben/verg/commit/5aad80aca2269d9f863aaf387a723262298cf5d7))
+
 ## [0.8.1](https://github.com/rvben/verg/compare/v0.8.0...v0.8.1) - 2026-07-19
 
 ### Added
