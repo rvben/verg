@@ -4,6 +4,18 @@ verg supports encrypted secrets via [age](https://age-encryption.org/). Secrets 
 
 A project with no `verg/secrets.age` file behaves exactly as before; the feature is opt-in by the file's presence.
 
+## `$env.` vs age (committed config)
+
+The other way to supply a secret is a `$env.VAR` reference in a **host or group var**, resolved from the control host's process environment. (`$env.` is only expanded for vars; resource properties are rendered as templates, so use `{{ env('VAR') }}` there instead.) This works, but it ties the project to whatever is exported in the ambient shell, so a project full of `$env.` references cannot be committed and applied reproducibly (and it is easy to leak a secret into the environment or logs). Prefer `secret.*` (age) for anything that should live in committed config; reserve `$env.` for values that are genuinely environment-specific.
+
+Run `verg lint` to audit which `$env.` references your committed config depends on:
+
+```sh
+verg lint          # human-readable list grouped by source
+verg lint -o json  # { env_refs, total, distinct_vars }
+```
+
+
 ## Prerequisites
 
 The `age` CLI must be installed on the **control host** (the machine that runs `verg apply`, `verg diff`, `verg check`, or `verg publish`). Targets do not need `age`; they receive already-rendered values inside the encrypted SSH transport.

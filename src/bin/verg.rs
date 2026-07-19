@@ -105,6 +105,8 @@ enum Command {
         #[arg(long, short, default_value = "all")]
         targets: String,
     },
+    /// Audit committed config for $env secret references (read-only)
+    Lint,
     /// Print resource type schemas as JSON
     Schema,
     /// Scaffold a new verg project directory
@@ -266,6 +268,10 @@ async fn run(
             let base_dir = resolve_project_dir(cli.path.clone())?;
             let engine = build_engine(engine_config)?;
             commands::check::run(&engine, &base_dir, &targets, output, cancel).await
+        }
+        Command::Lint => {
+            let base_dir = resolve_project_dir(cli.path.clone())?;
+            commands::lint::run(&base_dir, output)
         }
         Command::Schema => {
             // Schema works with built-in types outside a project; discover one

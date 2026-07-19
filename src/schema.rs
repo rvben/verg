@@ -69,6 +69,17 @@ pub fn run(
                 ]
             },
             {
+                "name": "lint",
+                "description": "Audit committed config for $env secret references (read-only)",
+                "mutating": false,
+                "args": [],
+                "output_fields": [
+                    {"name": "env_refs", "type": "array", "description": "Each item has source (e.g. state:pkg.docker, group:web, host:h1), key, and env_var"},
+                    {"name": "total", "type": "integer", "description": "Number of $env references found"},
+                    {"name": "distinct_vars", "type": "array", "description": "Sorted distinct environment variable names referenced"}
+                ]
+            },
+            {
                 "name": "schema",
                 "description": "Print resource type schemas as JSON",
                 "mutating": false,
