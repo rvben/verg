@@ -71,7 +71,22 @@ pub fn run(
         }
 
         match Bundle::build(&host, &state_files, base_dir, &inventory_ctx) {
-            Ok(mut bundle) => {
+            // Publish writes a bundle a pull-mode agent applies unattended, so a
+            // partial bundle (resources dropped for build failures, or skipped
+            // because a dependency failed) must never be written - it would
+            // silently omit resources. Any such drop fails the host, unlike the
+            // push-mode diff which tolerates partials.
+            Ok(outcome) if !outcome.failures.is_empty() || !outcome.skipped.is_empty() => {
+                for f in &outcome.failures {
+                    eprintln!("publish: {}: {}: {}", host.name, f.fqn(), f.error);
+                }
+                for s in &outcome.skipped {
+                    eprintln!("publish: {}: {}: {}", host.name, s.fqn(), s.reason);
+                }
+                failed += 1;
+            }
+            Ok(outcome) => {
+                let mut bundle = outcome.bundle;
                 bundle.resource_defs =
                     crate::bundle::referenced_defs(&bundle.resources, &resource_defs);
                 bundle.provider_defs =

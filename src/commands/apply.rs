@@ -145,6 +145,7 @@ mod tests {
                     error: None,
                     output: None,
                     changes: Vec::new(),
+                    failure_kind: None,
                 }],
             )],
         }
@@ -162,6 +163,7 @@ mod tests {
             error: None,
             output: None,
             changes: Vec::new(),
+            failure_kind: None,
         };
         let line = format_resource_line("web1", &r, false);
         assert!(

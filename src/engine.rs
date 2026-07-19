@@ -53,26 +53,26 @@ impl EngineResult {
     }
 
     /// True when every host failed purely on connectivity (no host did real work
-    /// and every failure is a `connection`-type resource). The actionable signal
-    /// is "could not reach the targets", which maps to exit 4.
+    /// and every failure is a `connection` failure). The actionable signal is
+    /// "could not reach the targets", which maps to exit 4.
     pub fn is_connection_only_failure(&self) -> bool {
-        !self.summaries.is_empty()
-            && self.summaries.iter().all(|s| {
-                s.summary.failed > 0
-                    && s.summary.ok == 0
-                    && s.summary.changed == 0
-                    && s.resources
-                        .iter()
-                        .filter(|r| r.status == ResourceStatus::Failed)
-                        .all(|r| r.resource_type == "connection")
-            })
+        self.every_failure_is_kind("connection")
     }
 
     /// True when every host failed purely on config/parse (no host did real
-    /// work and every failure is a `config`-type resource). The actionable
-    /// signal is "the configuration is broken", which maps to exit 5 - not a
-    /// connectivity or resource-execution failure.
+    /// work and every failure is a `config` failure). The actionable signal is
+    /// "the configuration is broken", which maps to exit 5 - not a connectivity
+    /// or resource-execution failure.
     pub fn is_config_only_failure(&self) -> bool {
+        self.every_failure_is_kind("config")
+    }
+
+    /// Shared shape for the two classifiers: no host did real work and every
+    /// failed resource is of the given failure kind. A build/connection failure
+    /// is matched by its `failure_kind` (the resource keeps its real type for
+    /// display); the whole-host abort path, which encodes the kind directly in
+    /// `resource_type`, is matched by that.
+    fn every_failure_is_kind(&self, kind: &str) -> bool {
         !self.summaries.is_empty()
             && self.summaries.iter().all(|s| {
                 s.summary.failed > 0
@@ -81,7 +81,7 @@ impl EngineResult {
                     && s.resources
                         .iter()
                         .filter(|r| r.status == ResourceStatus::Failed)
-                        .all(|r| r.resource_type == "config")
+                        .all(|r| r.failure_kind.as_deref() == Some(kind) || r.resource_type == kind)
             })
     }
 
@@ -251,6 +251,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                             output: None,
                             error: Some("cancelled before start".into()),
                             changes: Vec::new(),
+                            failure_kind: None,
                         }],
                     );
                 }
@@ -300,15 +301,71 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                         address: &host.address,
                         port: host.port,
                     };
-                    let mut bundle = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
+                    // Build runs after preflight on purpose: it consumes the facts
+                    // preflight gathered (templates and `when:` reference `fact.*`),
+                    // so an unreachable host reports a connection error here rather
+                    // than local build errors - the same as before partial builds.
+                    let outcome = Bundle::build(&host, &state_files, &base_dir, &inventory_ctx)?;
+                    let mut bundle = outcome.bundle;
                     bundle.resource_defs =
                         crate::bundle::referenced_defs(&bundle.resources, &resource_defs);
                     bundle.provider_defs =
                         crate::bundle::referenced_provider_defs(&bundle.resources, &provider_defs);
-                    let result = transport
-                        .execute(&conn, &bundle, dry_run, &arch, has_version)
-                        .await?;
-                    Ok::<RunSummary, Error>(result.summary)
+                    // Resources that failed to build (Failed) and their dependents
+                    // (Skipped) are merged in below, so one unbuildable resource
+                    // never hides the diff of the rest of the host.
+                    let mut synthetic: Vec<ResourceResult> = outcome
+                        .failures
+                        .into_iter()
+                        .map(|f| ResourceResult {
+                            resource_type: f.resource_type,
+                            name: f.name,
+                            status: ResourceStatus::Failed,
+                            diff: None,
+                            from: None,
+                            to: None,
+                            output: None,
+                            error: Some(f.error),
+                            changes: Vec::new(),
+                            // Classify by the build error's kind so exit codes match
+                            // the pre-partial-build behavior, while the resource
+                            // keeps its real type/name for the report.
+                            failure_kind: Some(f.kind.to_string()),
+                        })
+                        .collect();
+                    synthetic.extend(outcome.skipped.into_iter().map(|s| ResourceResult {
+                        resource_type: s.resource_type,
+                        name: s.name,
+                        status: ResourceStatus::Skipped,
+                        diff: None,
+                        from: None,
+                        to: None,
+                        output: None,
+                        error: Some(s.reason),
+                        changes: Vec::new(),
+                        failure_kind: None,
+                    }));
+                    let has_build_problems = !synthetic.is_empty();
+                    // Partial execution is for read-only runs only. `apply`
+                    // (dry_run=false) is strict: if the desired state could not be
+                    // fully computed, the host is NOT mutated - it fails wholesale,
+                    // exactly as it did before partial builds existed. A read-only
+                    // diff/check/plan still executes the buildable resources for a
+                    // partial diff; when nothing is buildable, skip the agent
+                    // round-trip (preflight already ran to gather facts).
+                    let skip_execute =
+                        has_build_problems && (!dry_run || bundle.resources.is_empty());
+                    let mut resources = if skip_execute {
+                        Vec::new()
+                    } else {
+                        transport
+                            .execute(&conn, &bundle, dry_run, &arch, has_version)
+                            .await?
+                            .summary
+                            .resources
+                    };
+                    resources.extend(synthetic);
+                    Ok::<RunSummary, Error>(RunSummary::from_results(&host_name, resources))
                 };
                 let result =
                     match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), work)
@@ -346,6 +403,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                             output: None,
                             error: Some(e.to_string()),
                             changes: Vec::new(),
+                            failure_kind: None,
                         }],
                     ),
                 }
@@ -369,6 +427,7 @@ impl<T: Transport + Send + Sync + 'static> Engine<T> {
                             output: None,
                             error: Some(format!("task join error: {e}")),
                             changes: Vec::new(),
+                            failure_kind: None,
                         }],
                     ));
                 }
@@ -398,6 +457,7 @@ mod tests {
                 output: None,
                 error: Some("boom".into()),
                 changes: Vec::new(),
+                failure_kind: None,
             }],
         )
     }
@@ -451,6 +511,7 @@ mod tests {
                 output: None,
                 error: None,
                 changes: Vec::new(),
+                failure_kind: None,
             }],
         );
         let r = EngineResult {
@@ -660,6 +721,7 @@ mod tests {
                             output: None,
                             error: None,
                             changes: Vec::new(),
+                            failure_kind: None,
                         });
                     }
                     for i in 0..ok {
@@ -673,6 +735,7 @@ mod tests {
                             output: None,
                             error: None,
                             changes: Vec::new(),
+                            failure_kind: None,
                         });
                     }
                     for i in 0..failed {
@@ -686,6 +749,7 @@ mod tests {
                             output: None,
                             error: Some("mock failure".into()),
                             changes: Vec::new(),
+                            failure_kind: None,
                         });
                     }
                     let summary = RunSummary::from_results(conn.address, results);
@@ -786,6 +850,161 @@ mod tests {
             result.exit_code(),
             crate::error::exit_codes::SUCCESS,
             "all changed -> SUCCESS(0)"
+        );
+    }
+
+    /// Like `mock_engine` but with a caller-supplied state file, so a test can
+    /// mix resources that build with ones that fail to build.
+    fn mock_engine_state(
+        dir: &std::path::Path,
+        addresses: &[&str],
+        state_toml: &str,
+        transport: MockTransport,
+    ) -> Engine<MockTransport> {
+        let mut hosts_toml = String::new();
+        for addr in addresses {
+            let name = addr.replace(['.', ':'], "_");
+            hosts_toml.push_str(&format!("[hosts.{name}]\naddress = \"{addr}\"\n"));
+        }
+        std::fs::write(dir.join("hosts.toml"), &hosts_toml).unwrap();
+        std::fs::create_dir_all(dir.join("state")).unwrap();
+        std::fs::write(dir.join("state").join("base.toml"), state_toml).unwrap();
+        Engine {
+            transport,
+            parallel: 8,
+            policy: crate::config::ConfigPolicy::strict(),
+            timeout_secs: 30,
+            age_identity: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn engine_merges_build_failures_with_executed_results() {
+        // A host with a buildable resource AND one that fails to build (undefined
+        // var) must report BOTH: the executed result and a per-resource build
+        // failure - the build failure never hides the rest of the diff.
+        let dir = tempfile::TempDir::new().unwrap();
+        let transport = MockTransport::new("0.0.0");
+        transport.set_outcome(
+            "192.0.2.1",
+            MockOutcome::Succeed {
+                changed: 0,
+                ok: 1,
+                failed: 0,
+            },
+        );
+        let state = "[resource.pkg.curl]\nname = \"curl\"\n\n[resource.file.bad]\ncontent = \"{{ undefined_var }}\"\n";
+        let engine = mock_engine_state(dir.path(), &["192.0.2.1"], state, transport);
+        let result = engine.run(dir.path(), "all", true).await.unwrap();
+
+        let host = &result.summaries[0];
+        assert_eq!(
+            host.summary.ok, 1,
+            "the executed resource is still reported"
+        );
+        assert_eq!(host.summary.failed, 1, "the unbuildable resource failed");
+        let failed = host
+            .resources
+            .iter()
+            .find(|r| r.status == ResourceStatus::Failed)
+            .unwrap();
+        // The build failure keeps the configured resource's real identity for
+        // display, but classifies as "config" for exit-code purposes.
+        assert_eq!(failed.resource_type, "file");
+        assert_eq!(failed.name, "bad");
+        assert_eq!(failed.failure_kind.as_deref(), Some("config"));
+    }
+
+    #[tokio::test]
+    async fn engine_all_unbuildable_exits_invalid_config() {
+        // When every selected resource fails to build, the run still classifies as
+        // a config-only failure (exit INVALID_CONFIG), even though each failed
+        // resource keeps its real type - the failure_kind carries the config
+        // classification. Guards the pre-partial-build exit-code contract.
+        let dir = tempfile::TempDir::new().unwrap();
+        let transport = MockTransport::new("0.0.0");
+        let state = "[resource.file.a]\ncontent = \"{{ nope_a }}\"\n\n[resource.file.b]\ncontent = \"{{ nope_b }}\"\n";
+        let engine = mock_engine_state(dir.path(), &["192.0.2.1"], state, transport);
+        let result = engine.run(dir.path(), "all", true).await.unwrap();
+
+        assert!(result.is_config_only_failure());
+        assert_eq!(
+            result.exit_code(),
+            crate::error::exit_codes::INVALID_CONFIG,
+            "all-unbuildable must exit INVALID_CONFIG, not total/partial failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_apply_is_strict_on_build_failures() {
+        // apply (dry_run=false) must NOT execute a partial bundle: if any resource
+        // fails to build, the host is not mutated at all. The mock would report a
+        // change if execute ran, so a change appearing would be the regression.
+        let dir = tempfile::TempDir::new().unwrap();
+        let transport = MockTransport::new("0.0.0");
+        transport.set_outcome(
+            "192.0.2.1",
+            MockOutcome::Succeed {
+                changed: 1,
+                ok: 0,
+                failed: 0,
+            },
+        );
+        let state = "[resource.pkg.curl]\nname = \"curl\"\n\n[resource.file.bad]\ncontent = \"{{ undefined_var }}\"\n";
+        let engine = mock_engine_state(dir.path(), &["192.0.2.1"], state, transport);
+        // dry_run = false => apply.
+        let result = engine.run(dir.path(), "all", false).await.unwrap();
+
+        let host = &result.summaries[0];
+        assert_eq!(
+            host.summary.changed, 0,
+            "apply must not execute the partial bundle after a build failure"
+        );
+        assert_eq!(
+            host.summary.failed, 1,
+            "the build failure is still reported"
+        );
+        assert!(
+            host.resources
+                .iter()
+                .all(|r| r.status != ResourceStatus::Changed),
+            "nothing may be applied when the desired state is incomplete"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_skips_ssh_when_all_resources_fail_to_build() {
+        // If every in-scope resource fails to build, the engine must not connect.
+        // The mock is set to FAIL on execute; a connection error would appear iff
+        // execute ran. The build failure (real type, not "connection") plus the
+        // absence of the connection error prove SSH was skipped.
+        let dir = tempfile::TempDir::new().unwrap();
+        let transport = MockTransport::new("0.0.0");
+        transport.set_outcome("192.0.2.1", MockOutcome::Fail("connection refused".into()));
+        let state = "[resource.file.bad]\ncontent = \"{{ undefined_var }}\"\n";
+        let engine = mock_engine_state(dir.path(), &["192.0.2.1"], state, transport);
+        let result = engine.run(dir.path(), "all", true).await.unwrap();
+
+        let host = &result.summaries[0];
+        assert_eq!(host.summary.failed, 1);
+        let failed = host
+            .resources
+            .iter()
+            .find(|r| r.status == ResourceStatus::Failed)
+            .unwrap();
+        assert_eq!(
+            failed.resource_type, "file",
+            "the build failure, not a probe"
+        );
+        assert_ne!(failed.resource_type, "connection");
+        assert!(
+            !failed
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("refused"),
+            "execute must not have run: {:?}",
+            failed.error
         );
     }
 

@@ -260,13 +260,20 @@ fn build_resource(
     Ok((resource, register_refs))
 }
 
-/// Validate that register names are unique and all register references have
-/// proper `after` dependencies declared.
+/// Validate register wiring across the resources that built successfully.
+///
+/// A duplicate register name is a genuine authoring error that makes the whole
+/// bundle ambiguous, so it aborts (returns `Err`). An unsatisfiable *reference*
+/// (unknown register, or a missing `after` dependency) is scoped to the single
+/// referring resource - it is returned as `(index, message)` so the caller can
+/// fail just that resource and still diff the rest. A reference can be unknown
+/// because its provider failed to build, so treating it per-resource keeps one
+/// broken resource from taking down the host.
 fn validate_registers(
     resources: &[ResolvedResource],
     register_refs_per_resource: &[Vec<String>],
-) -> Result<(), Error> {
-    // Validate register names are unique
+) -> Result<Vec<(usize, String)>, Error> {
+    // Validate register names are unique (fatal - the bundle is ambiguous otherwise).
     let mut register_names: HashMap<String, String> = HashMap::new();
     for r in resources {
         if let Some(ref reg_name) = r.register {
@@ -280,25 +287,35 @@ fn validate_registers(
         }
     }
 
-    // Validate register references have proper after dependencies
-    for (r, ref_names) in resources.iter().zip(register_refs_per_resource) {
+    // Validate register references resolve and declare their `after` dependency.
+    // Collect at most one failure per resource; the resource is then dropped.
+    let mut ref_failures = Vec::new();
+    for (i, (r, ref_names)) in resources.iter().zip(register_refs_per_resource).enumerate() {
         for ref_name in ref_names {
-            let reg_fqn = register_names.get(ref_name).ok_or_else(|| {
-                Error::Config(format!(
-                    "{}: references unknown register '{ref_name}'",
-                    r.fqn()
-                ))
-            })?;
-            if !r.after.contains(reg_fqn) {
-                return Err(Error::Config(format!(
-                    "{}: uses register '{ref_name}' but does not declare after = [\"{reg_fqn}\"]",
-                    r.fqn()
-                )));
+            match register_names.get(ref_name) {
+                None => {
+                    ref_failures.push((
+                        i,
+                        format!("{}: references unknown register '{ref_name}'", r.fqn()),
+                    ));
+                    break;
+                }
+                Some(reg_fqn) if !r.after.contains(reg_fqn) => {
+                    ref_failures.push((
+                        i,
+                        format!(
+                            "{}: uses register '{ref_name}' but does not declare after = [\"{reg_fqn}\"]",
+                            r.fqn()
+                        ),
+                    ));
+                    break;
+                }
+                Some(_) => {}
             }
         }
     }
 
-    Ok(())
+    Ok(ref_failures)
 }
 
 /// Extract fact.* and group.* string vars for `when` conditional evaluation.
@@ -342,6 +359,57 @@ pub fn referenced_provider_defs(
         .collect()
 }
 
+/// A resource that could not be built on the control machine (a template/secret
+/// render error, or an unsatisfiable register reference). Reported as a failed
+/// resource so the rest of the host still diffs, rather than aborting the whole
+/// host on the first failure. Carries the resource's real type and name so the
+/// diff/apply report shows the configured resource (e.g. `file.bad`), not a
+/// synthetic identity.
+#[derive(Debug, Clone)]
+pub struct BuildFailure {
+    pub resource_type: String,
+    pub name: String,
+    /// The error's `failure_kind()` (e.g. "config"/"resource"), carried so
+    /// exit-code classification can treat a build failure by its real kind while
+    /// the resource keeps its true `resource_type` for display.
+    pub kind: &'static str,
+    pub error: String,
+}
+
+impl BuildFailure {
+    pub fn fqn(&self) -> String {
+        format!("{}.{}", self.resource_type, self.name)
+    }
+}
+
+/// A resource that could build, but is dropped because a resource it depends on
+/// (via `after`) failed to build. Reported as Skipped ("dependency failed"),
+/// mirroring how the agent skips dependents of a resource that fails at apply
+/// time. It must not be transmitted: the agent's DAG rejects an `after` edge to
+/// a resource absent from the bundle and would abort the whole host.
+#[derive(Debug, Clone)]
+pub struct BuildSkip {
+    pub resource_type: String,
+    pub name: String,
+    pub reason: String,
+}
+
+impl BuildSkip {
+    pub fn fqn(&self) -> String {
+        format!("{}.{}", self.resource_type, self.name)
+    }
+}
+
+/// The result of building a host bundle: the resources that built successfully
+/// (ready to transmit), the per-resource build failures, and any resources
+/// skipped because a dependency failed to build.
+#[derive(Debug, Clone)]
+pub struct BuildOutcome {
+    pub bundle: Bundle,
+    pub failures: Vec<BuildFailure>,
+    pub skipped: Vec<BuildSkip>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bundle {
     pub host: String,
@@ -371,10 +439,11 @@ impl Bundle {
         state_files: &[StateFile],
         base_dir: &Path,
         inventory_ctx: &serde_json::Value,
-    ) -> Result<Self, Error> {
+    ) -> Result<BuildOutcome, Error> {
         let jinja = vars::create_env();
         let mut resources = Vec::new();
         let mut register_refs_per_resource: Vec<Vec<String>> = Vec::new();
+        let mut failures: Vec<BuildFailure> = Vec::new();
 
         for sf in state_files {
             if let Some(targets) = &sf.targets {
@@ -386,24 +455,110 @@ impl Bundle {
                 }
             }
 
+            // A per-resource build failure (e.g. an absent secret referenced by
+            // one resource) becomes a failed resource, not a whole-host abort, so
+            // a read-only diff still covers every resource that does build.
             for decl in sf.resources()? {
-                let (resource, reg_refs) =
-                    build_resource(&jinja, &decl, host, base_dir, inventory_ctx)?;
-                resources.push(resource);
-                register_refs_per_resource.push(reg_refs);
+                match build_resource(&jinja, &decl, host, base_dir, inventory_ctx) {
+                    Ok((resource, reg_refs)) => {
+                        resources.push(resource);
+                        register_refs_per_resource.push(reg_refs);
+                    }
+                    Err(e) => failures.push(BuildFailure {
+                        resource_type: decl.resource_type.clone(),
+                        name: decl.name.clone(),
+                        kind: e.failure_kind(),
+                        error: e.to_string(),
+                    }),
+                }
             }
         }
 
-        validate_registers(&resources, &register_refs_per_resource)?;
+        // Register wiring: duplicates abort; an unsatisfiable reference fails only
+        // its own resource (dropped from the bundle) so the rest still diffs.
+        let ref_failures = validate_registers(&resources, &register_refs_per_resource)?;
+        if ref_failures.is_empty() {
+            // Common path: keep all resources, no reallocation.
+        } else {
+            let bad: std::collections::HashSet<usize> =
+                ref_failures.iter().map(|(i, _)| *i).collect();
+            let mut kept = Vec::with_capacity(resources.len() - bad.len());
+            for (i, r) in resources.into_iter().enumerate() {
+                if bad.contains(&i) {
+                    let msg = ref_failures
+                        .iter()
+                        .find(|(idx, _)| *idx == i)
+                        .map(|(_, m)| m.clone())
+                        .unwrap_or_default();
+                    failures.push(BuildFailure {
+                        resource_type: r.resource_type.clone(),
+                        name: r.name.clone(),
+                        kind: "config",
+                        error: msg,
+                    });
+                } else {
+                    kept.push(r);
+                }
+            }
+            resources = kept;
+        }
+
+        // Cascade: a dropped resource leaves any dependent (`after = ["dropped"]`)
+        // pointing at a resource absent from the bundle, which the agent's DAG
+        // rejects - aborting the whole host and defeating the partial diff. Drop
+        // those dependents too, as Skipped ("dependency failed"), transitively,
+        // mirroring how the agent skips dependents of a resource that fails at
+        // apply time.
+        let mut failed_fqns: std::collections::HashSet<String> =
+            failures.iter().map(|f| f.fqn()).collect();
+        let mut skipped: Vec<BuildSkip> = Vec::new();
+        if !failed_fqns.is_empty() {
+            loop {
+                let mut moved = false;
+                let mut kept = Vec::with_capacity(resources.len());
+                for r in std::mem::take(&mut resources) {
+                    match r.after.iter().find(|dep| failed_fqns.contains(*dep)) {
+                        Some(dep) => {
+                            skipped.push(BuildSkip {
+                                resource_type: r.resource_type.clone(),
+                                name: r.name.clone(),
+                                reason: format!("dependency '{dep}' failed to build"),
+                            });
+                            failed_fqns.insert(r.fqn());
+                            moved = true;
+                        }
+                        None => kept.push(r),
+                    }
+                }
+                resources = kept;
+                if !moved {
+                    break;
+                }
+            }
+
+            // A surviving resource may still `notify` a dropped resource (a handler
+            // that failed to build is absent from the bundle). The agent, not
+            // finding the FQN among handlers, would misread it as a shorthand
+            // notify (e.g. `restart: <fqn>`) and emit a bogus action. `notify` is
+            // weaker than `after` - the notifier does not depend on the handler to
+            // run - so strip the dangling entries rather than dropping the resource.
+            for r in &mut resources {
+                r.notify.retain(|target| !failed_fqns.contains(target));
+            }
+        }
 
         let facts = extract_facts(&host.vars);
 
-        Ok(Bundle {
-            host: host.name.clone(),
-            resources,
-            facts,
-            resource_defs: HashMap::new(),
-            provider_defs: HashMap::new(),
+        Ok(BuildOutcome {
+            bundle: Bundle {
+                host: host.name.clone(),
+                resources,
+                facts,
+                resource_defs: HashMap::new(),
+                provider_defs: HashMap::new(),
+            },
+            failures,
+            skipped,
         })
     }
 
@@ -475,8 +630,9 @@ state = "present"
             ),
         ];
 
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(bundle.resources.len(), 2);
     }
 
@@ -493,8 +649,9 @@ content = "listen {{ http_port }}"
 "#,
         )];
 
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("listen 80".into())
@@ -513,8 +670,9 @@ after = ["pkg.nginx", "file.conf"]
 "#,
         )];
 
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(bundle.resources[0].after, vec!["pkg.nginx", "file.conf"]);
         assert!(!bundle.resources[0].props.contains_key("after"));
     }
@@ -530,8 +688,9 @@ state = "present"
 "#,
         )];
 
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         let serialized = bundle.to_toml().unwrap();
         let deserialized = Bundle::from_toml(&serialized).unwrap();
         assert_eq!(deserialized.host, "web1");
@@ -555,7 +714,9 @@ source = "files/test.conf"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("server_name web1;".into())
@@ -564,17 +725,126 @@ source = "files/test.conf"
     }
 
     #[test]
-    fn undefined_variable_errors() {
+    fn undefined_variable_is_a_per_resource_failure() {
+        // A resource whose template references an undefined variable fails to
+        // build, but as a per-resource failure (kind "config") - not a whole-host
+        // abort - so a read-only diff still covers every other resource.
         let host = test_host();
         let files = vec![parse_state(
             r#"
 [resource.file.conf]
 content = "{{ undefined_var }}"
+
+[resource.pkg.curl]
+name = "curl"
+state = "present"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null);
-        assert!(matches!(result, Err(Error::Parse(_))));
+        let outcome =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        // The good resource still built.
+        assert_eq!(outcome.bundle.resources.len(), 1);
+        assert_eq!(outcome.bundle.resources[0].fqn(), "pkg.curl");
+        // The broken one is reported as a failed resource, keeping its real
+        // identity (type + name) so the report names the configured resource.
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(outcome.failures[0].resource_type, "file");
+        assert_eq!(outcome.failures[0].name, "conf");
+        assert_eq!(outcome.failures[0].fqn(), "file.conf");
+    }
+
+    #[test]
+    fn dependents_of_a_failed_build_are_skipped_not_transmitted() {
+        // A resource whose `after` names a resource that failed to build must be
+        // dropped from the bundle (Skipped), transitively - otherwise the
+        // transmitted bundle has an `after` edge to an absent resource and the
+        // agent's DAG aborts the whole host. An unrelated resource still builds.
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.file.secret]
+content = "{{ undefined_var }}"
+
+[resource.pkg.app]
+name = "app"
+after = ["file.secret"]
+
+[resource.pkg.plugin]
+name = "plugin"
+after = ["pkg.app"]
+
+[resource.pkg.unrelated]
+name = "unrelated"
+"#,
+        )];
+
+        let outcome =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+
+        // Only the unrelated resource is transmitted.
+        assert_eq!(outcome.bundle.resources.len(), 1);
+        assert_eq!(outcome.bundle.resources[0].fqn(), "pkg.unrelated");
+        // The root cause is a failure.
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(outcome.failures[0].fqn(), "file.secret");
+        // Both the direct dependent and its transitive dependent are skipped.
+        let skipped: std::collections::HashSet<String> =
+            outcome.skipped.iter().map(|s| s.fqn()).collect();
+        assert_eq!(
+            skipped,
+            ["pkg.app".to_string(), "pkg.plugin".to_string()]
+                .into_iter()
+                .collect(),
+            "direct and transitive dependents must both be skipped"
+        );
+        // No transmitted resource has a dangling `after` edge.
+        let present: std::collections::HashSet<String> =
+            outcome.bundle.resources.iter().map(|r| r.fqn()).collect();
+        for r in &outcome.bundle.resources {
+            for dep in &r.after {
+                assert!(present.contains(dep), "dangling after edge to {dep}");
+            }
+        }
+    }
+
+    #[test]
+    fn notify_to_a_failed_handler_is_stripped() {
+        // A handler that fails to build is dropped from the bundle. A surviving
+        // resource that notifies it must have that notify entry stripped - else
+        // the agent misreads the absent FQN as a shorthand notify and emits a
+        // bogus action. The notifier still builds (notify is not a hard dep).
+        let host = test_host();
+        let files = vec![parse_state(
+            r#"
+[resource.file.reload_marker]
+handler = true
+path = "/tmp/marker"
+content = "{{ undefined_var }}"
+
+[resource.file.conf]
+path = "/etc/app.conf"
+content = "static"
+notify = ["file.reload_marker"]
+"#,
+        )];
+
+        let outcome =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+
+        // The notifier still built.
+        assert_eq!(outcome.bundle.resources.len(), 1);
+        let conf = &outcome.bundle.resources[0];
+        assert_eq!(conf.fqn(), "file.conf");
+        // Its dangling notify was removed.
+        assert!(
+            conf.notify.is_empty(),
+            "notify to the failed handler must be stripped, got: {:?}",
+            conf.notify
+        );
+        // The handler is reported as a build failure.
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(outcome.failures[0].fqn(), "file.reload_marker");
     }
 
     #[test]
@@ -598,7 +868,9 @@ template = true
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("listen 80\nroot /var/www".into())
@@ -621,7 +893,9 @@ source = "files/raw.conf"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(
             bundle.resources[0].props["content"],
             toml::Value::String("{{ not_rendered }}".into())
@@ -634,8 +908,9 @@ source = "files/raw.conf"
         let files = vec![parse_state(
             "[resource.cmd.secret]\ncommand = \"true\"\ncreates = \"/x\"\nsensitive = true\n",
         )];
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert!(bundle.resources[0].sensitive);
     }
 
@@ -651,8 +926,9 @@ unless = "true"
 "#,
         )];
 
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert!(bundle.resources[0].handler);
         assert!(!bundle.resources[0].props.contains_key("handler"));
     }
@@ -673,8 +949,9 @@ after = ["cmd.get-ip"]
 "#,
         )];
 
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         let content = bundle.resources.iter().find(|r| r.name == "conf").unwrap();
         let val = content.props["content"].as_str().unwrap();
         assert!(
@@ -684,7 +961,11 @@ after = ["cmd.get-ip"]
     }
 
     #[test]
-    fn bundle_errors_on_register_ref_without_dependency() {
+    fn register_ref_without_dependency_fails_only_that_resource() {
+        // Using a register without declaring the `after` dependency is an
+        // authoring error, but it is scoped to the referring resource: that
+        // resource fails, while the register provider (and any unrelated resource)
+        // still builds.
         let host = test_host();
         let files = vec![parse_state(
             r#"
@@ -698,14 +979,21 @@ content = "ip={{ register.host_ip }}"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("after"));
+        let outcome =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        assert_eq!(outcome.bundle.resources.len(), 1);
+        assert_eq!(outcome.bundle.resources[0].fqn(), "cmd.get-ip");
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(outcome.failures[0].fqn(), "file.conf");
+        assert!(
+            outcome.failures[0].error.contains("after"),
+            "got: {}",
+            outcome.failures[0].error
+        );
     }
 
     #[test]
-    fn bundle_errors_on_unknown_register_ref() {
+    fn unknown_register_ref_fails_only_that_resource() {
         let host = test_host();
         let files = vec![parse_state(
             r#"
@@ -715,8 +1003,16 @@ content = "ip={{ register.nonexistent }}"
 "#,
         )];
 
-        let result = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null);
-        assert!(result.is_err());
+        let outcome =
+            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        assert!(outcome.bundle.resources.is_empty());
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(outcome.failures[0].fqn(), "file.conf");
+        assert!(
+            outcome.failures[0].error.contains("unknown register"),
+            "got: {}",
+            outcome.failures[0].error
+        );
     }
 
     #[test]
@@ -751,8 +1047,9 @@ register = "host_ip"
 "#,
         )];
 
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(bundle.resources[0].register, Some("host_ip".into()));
         assert!(!bundle.resources[0].props.contains_key("register"));
     }
@@ -784,7 +1081,9 @@ template = true
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         let env_content = bundle.resources[0].props["env_content"].as_str().unwrap();
         assert_eq!(env_content, "PORT=80\nROOT=/var/www");
     }
@@ -798,8 +1097,9 @@ template = true
         let files = vec![parse_state(
             "[resource.file.conf]\npath = \"/etc/x\"\n[resource.file.conf.vars]\np = 8080\n",
         )];
-        let bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         assert_eq!(
             bundle.resources[0].props.get("p"),
             Some(&toml::Value::String("8080".into())),
@@ -877,8 +1177,9 @@ state = "present"
 "#,
         )];
 
-        let mut bundle =
-            Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null).unwrap();
+        let mut bundle = Bundle::build(&host, &files, Path::new("/tmp"), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
 
         let custom_def = ResourceDef {
             description: "a custom resource type".into(),
@@ -981,7 +1282,9 @@ env_file = "files/app.env"
 "#,
         )];
 
-        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null).unwrap();
+        let bundle = Bundle::build(&host, &files, dir.path(), &serde_json::Value::Null)
+            .unwrap()
+            .bundle;
         let env_content = bundle.resources[0].props["env_content"].as_str().unwrap();
         assert_eq!(env_content, "PORT={{ not_rendered }}");
     }

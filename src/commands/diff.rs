@@ -174,6 +174,7 @@ mod tests {
             error: error.map(String::from),
             output: None,
             changes: Vec::new(),
+            failure_kind: None,
         }
     }
 
@@ -241,6 +242,7 @@ mod tests {
             error: None,
             output: None,
             changes: Vec::new(),
+            failure_kind: None,
         };
         let keep: HashSet<&str> = ["diff"].into_iter().collect();
         let v = project_resource(&r, &keep);

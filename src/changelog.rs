@@ -126,6 +126,7 @@ mod tests {
                 error: None,
                 output: Some("captured".into()),
                 changes: Vec::new(),
+                failure_kind: None,
             }],
         )];
         let red = super::redact_for_changelog(&summaries);
@@ -153,6 +154,7 @@ mod tests {
                 error: None,
                 output: Some("captured output".into()),
                 changes: Vec::new(),
+                failure_kind: None,
             }],
         );
 
@@ -209,6 +211,7 @@ mod tests {
                 error: None,
                 output: None,
                 changes: Vec::new(),
+                failure_kind: None,
             }],
         )];
 

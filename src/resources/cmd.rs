@@ -83,6 +83,7 @@ pub fn execute(
             error: None,
             output: captured,
             changes: Vec::new(),
+            failure_kind: None,
         })
     } else {
         // Deliberately omit the command itself to avoid leaking context; stderr

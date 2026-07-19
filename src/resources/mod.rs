@@ -171,6 +171,13 @@ pub struct ResourceResult {
     /// Structured per-field changes (machine-readable companion to `diff`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changes: Vec<FieldChange>,
+    /// Classification of a failure independent of `resource_type`, which stays the
+    /// real resource type for display/JSON. `Some("config")`/`Some("connection")`
+    /// marks a control-side build/connection failure so exit-code classification
+    /// (`is_config_only_failure` / `is_connection_only_failure`) works even though
+    /// the resource keeps its true type. `None` for normal (agent-executed) results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -615,6 +622,7 @@ mod tests {
             error: None,
             output: Some("captured secret".into()),
             changes: vec![FieldChange::update("mode", "0644", "0600")],
+            failure_kind: None,
         };
         let red = redact_result(r, true);
         assert_eq!(red.status, ResourceStatus::Changed);
@@ -640,6 +648,7 @@ mod tests {
             error: None,
             output: Some("o".into()),
             changes: Vec::new(),
+            failure_kind: None,
         };
         let red = redact_result(r, false);
         assert_eq!(red.diff.as_deref(), Some("d"));
@@ -659,6 +668,7 @@ mod tests {
                 error: None,
                 output: None,
                 changes: Vec::new(),
+                failure_kind: None,
             },
             ResourceResult {
                 resource_type: "file".into(),
@@ -670,6 +680,7 @@ mod tests {
                 error: None,
                 output: None,
                 changes: Vec::new(),
+                failure_kind: None,
             },
             ResourceResult {
                 resource_type: "service".into(),
@@ -681,6 +692,7 @@ mod tests {
                 error: Some("not found".into()),
                 output: None,
                 changes: Vec::new(),
+                failure_kind: None,
             },
         ];
         let summary = RunSummary::from_results("web1", results);
