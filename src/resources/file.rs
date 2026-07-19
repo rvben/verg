@@ -58,8 +58,9 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
         let current = crate::resources::read_current(target)?;
         if current.as_deref() != Some(desired.as_str()) {
             changes.push("content".to_string());
-            // Content bodies can be large, so record the structural change
-            // without the full before/after payload.
+            // Content bodies can be large, so record digests of the before/after
+            // bodies rather than the full payload. The plan drift gate compares
+            // these, so a changed body is caught without carrying it verbatim.
             field_changes.push(FieldChange {
                 field: "content".to_string(),
                 action: if current.is_none() {
@@ -67,8 +68,8 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 } else {
                     ChangeAction::Update
                 },
-                from: None,
-                to: None,
+                from: current.as_deref().map(crate::resources::content_digest),
+                to: Some(crate::resources::content_digest(desired)),
             });
             if !dry_run {
                 if let Some(parent) = target.parent() {
@@ -186,12 +187,53 @@ mod tests {
             .find(|c| c.field == "content")
             .expect("content change");
         assert_eq!(content.action, ChangeAction::Create);
+        // A create carries no `from` (no prior body) but records the desired
+        // body's digest in `to`, so the plan gate can detect a body change.
+        assert!(content.from.is_none());
+        assert_eq!(
+            content.to.as_deref(),
+            Some(crate::resources::content_digest("hello\n").as_str())
+        );
         // Mode drift carries the concrete before/after.
         let mode = result.changes.iter().find(|c| c.field == "mode");
         if let Some(m) = mode {
             assert_eq!(m.action, ChangeAction::Update);
             assert_eq!(m.to.as_deref(), Some("0640"));
         }
+    }
+
+    #[test]
+    fn content_update_digests_differ_for_different_bodies() {
+        // Rewriting an existing file records from=digest(old), to=digest(new);
+        // a different desired body yields a different `to`, which is exactly what
+        // the plan drift gate compares. Two distinct bodies must not collide.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("app.conf");
+        std::fs::write(&path, "old\n").unwrap();
+        let base = HashMap::from([(
+            "path".to_string(),
+            toml::Value::String(path.to_string_lossy().into_owned()),
+        )]);
+
+        let mut a = base.clone();
+        a.insert("content".into(), toml::Value::String("new-a\n".into()));
+        let ca = execute(&resource("app", a), true).unwrap();
+        let ca = ca.changes.iter().find(|c| c.field == "content").unwrap();
+
+        let mut b = base.clone();
+        b.insert("content".into(), toml::Value::String("new-b\n".into()));
+        let cb = execute(&resource("app", b), true).unwrap();
+        let cb = cb.changes.iter().find(|c| c.field == "content").unwrap();
+
+        assert_eq!(ca.action, ChangeAction::Update);
+        assert_eq!(
+            ca.from.as_deref(),
+            Some(crate::resources::content_digest("old\n").as_str())
+        );
+        assert_ne!(
+            ca.to, cb.to,
+            "different bodies must yield different digests"
+        );
     }
 
     #[test]

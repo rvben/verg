@@ -75,14 +75,15 @@ fn pending_signature(items: &[RunSummary]) -> Vec<(&str, Vec<ResourceResult>)> {
 /// resource (status, human diff string, `from`/`to` values, error, structured
 /// changes) except `output`. It reliably catches a resource entering/leaving
 /// the pending set, a status change, value-level changes that appear in the
-/// diff (mode, owner, package, ...), and a reviewed body a resource exposes in
-/// `from`/`to` (e.g. `cron`). It does NOT catch a change to a *body* a resource
-/// keeps out of every reviewed field: a `file`'s `content` reports a `content`
-/// FieldChange with `from`/`to` unset (the body is written, never surfaced), so
-/// two different contents serialize identically; the same holds for a redacted
-/// sensitive value. Detecting that needs a per-resource content hash (and, for
-/// secrets, a keyed digest) in the diff - a follow-up, tracked in
-/// docs/improvements.md.
+/// diff (mode, owner, package, ...), a reviewed body a resource exposes in
+/// `from`/`to` (e.g. `cron`), and a large body a resource fingerprints as a
+/// `sha256:` digest in a `FieldChange` (a `file`'s `content`, a compose/env
+/// body). The one residual gap is a *sensitive* body: redaction deliberately
+/// blanks `from`/`to` (and the change digests) so no hash of a secret is ever
+/// persisted to the plan, which means a secret changing between plan and apply
+/// is not detected here. That is an accepted trade (a secret the reviewer never
+/// saw cannot be meaningfully "reviewed"); closing it would require a keyed
+/// digest and a place to keep the key - out of scope for the plan artifact.
 pub fn is_stale(plan: &Plan, current: &[RunSummary]) -> bool {
     pending_signature(&plan.items) != pending_signature(current)
 }
@@ -215,6 +216,62 @@ mod tests {
             items: vec![summary("h", vec![a])],
         };
         assert!(is_stale(&plan, &[summary("h", vec![b])]));
+    }
+
+    #[test]
+    fn content_digest_change_is_stale() {
+        // A file whose body changes reports the same human diff ("content") but a
+        // different content-digest in its FieldChange; the gate must treat that as
+        // drift so apply --plan never writes an unreviewed body.
+        use crate::resources::{ChangeAction, FieldChange};
+        let mk = |digest: &str| {
+            let mut r = ResourceResult::changed("file", "app", "content");
+            r.changes = vec![FieldChange {
+                field: "content".into(),
+                action: ChangeAction::Update,
+                from: Some(crate::resources::content_digest("old")),
+                to: Some(digest.to_string()),
+            }];
+            r
+        };
+        let plan = Plan {
+            version: PLAN_VERSION,
+            targets: "all".into(),
+            items: vec![summary(
+                "h",
+                vec![mk(&crate::resources::content_digest("a"))],
+            )],
+        };
+        let current = vec![summary(
+            "h",
+            vec![mk(&crate::resources::content_digest("b"))],
+        )];
+        assert!(is_stale(&plan, &current));
+    }
+
+    #[test]
+    fn redacted_sensitive_body_is_the_documented_gap() {
+        // A sensitive file redacts its content digest to a constant, so two
+        // different secret bodies are indistinguishable to the gate. This is the
+        // accepted residual gap; the test pins the behavior so it stays deliberate.
+        use crate::resources::{ChangeAction, FieldChange, redact_result};
+        let mk = |body: &str| {
+            let mut r = ResourceResult::changed("file", "secret", "content");
+            r.changes = vec![FieldChange {
+                field: "content".into(),
+                action: ChangeAction::Update,
+                from: None,
+                to: Some(crate::resources::content_digest(body)),
+            }];
+            redact_result(r, true)
+        };
+        let plan = Plan {
+            version: PLAN_VERSION,
+            targets: "all".into(),
+            items: vec![summary("h", vec![mk("secret-a")])],
+        };
+        let current = vec![summary("h", vec![mk("secret-b")])];
+        assert!(!is_stale(&plan, &current));
     }
 
     #[test]

@@ -65,8 +65,8 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 } else {
                     super::ChangeAction::Update
                 },
-                from: None,
-                to: None,
+                from: current.as_deref().map(crate::resources::content_digest),
+                to: Some(crate::resources::content_digest(content)),
             });
             if !dry_run {
                 crate::resources::atomic::write_atomic(
@@ -93,8 +93,8 @@ pub fn execute(resource: &ResolvedResource, dry_run: bool) -> Result<ResourceRes
                 } else {
                     super::ChangeAction::Update
                 },
-                from: None,
-                to: None,
+                from: current.as_deref().map(crate::resources::content_digest),
+                to: Some(crate::resources::content_digest(env_content)),
             });
             if !dry_run {
                 crate::resources::atomic::write_atomic(

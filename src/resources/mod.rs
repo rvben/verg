@@ -66,6 +66,19 @@ pub fn read_current(path: &std::path::Path) -> Result<Option<String>, Error> {
     }
 }
 
+/// A short, non-reversible fingerprint of a content body, as `sha256:<hex>`.
+///
+/// Resources whose reviewed body is too large to carry verbatim in a diff (a
+/// file's `content`, a compose/env file body) record this digest in the
+/// `FieldChange` `from`/`to` instead. The plan drift gate compares those, so a
+/// changed body is caught even though the raw body never enters the plan. For a
+/// `sensitive` resource the redaction path clears these before they are
+/// serialized, so no digest of a secret is ever persisted.
+pub fn content_digest(body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("sha256:{:x}", Sha256::digest(body.as_bytes()))
+}
+
 /// Sentinel prefix/suffix for register references preserved through template rendering.
 pub const REGISTER_SENTINEL: &str = "__VERG_REG_";
 pub const REGISTER_SENTINEL_END: &str = "__VERG_END__";
