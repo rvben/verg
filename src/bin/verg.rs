@@ -121,6 +121,8 @@ enum Command {
     Lint,
     /// Print resource type schemas as JSON
     Schema,
+    /// Describe supported resources and safety behavior without loading a project
+    Capabilities,
     /// Scaffold a new verg project directory
     Init {
         /// Overwrite existing scaffold files
@@ -314,6 +316,26 @@ async fn run(
                 &custom_defs,
             )?;
             verg::schema::run(&custom_defs, &provider_defs);
+            Ok(0)
+        }
+        Command::Capabilities => {
+            let value = serde_json::json!({
+                "resources": verg::config::known_resource_types(),
+                "host_key_policies": ["yes", "accept-new", "no"],
+                "plan_drift_protection": true,
+                "structured_output": true
+            });
+            if output.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).expect("serialize capabilities")
+                );
+            } else {
+                println!(
+                    "Resources: {}\nHost-key policies: yes, accept-new, no\nPlan drift protection: enabled",
+                    verg::config::known_resource_types().join(", ")
+                );
+            }
             Ok(0)
         }
         Command::Init { force } => {

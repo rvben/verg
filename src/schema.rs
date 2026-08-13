@@ -8,8 +8,8 @@ pub fn run(
     custom_defs: &HashMap<String, ResourceDef>,
     provider_defs: &HashMap<String, crate::provider_def::ProviderDef>,
 ) {
-    let schema = json!({
-        "clispec": "0.2",
+    let mut schema = json!({
+        "clispec": "0.3",
         "name": "verg",
         "version": env!("CARGO_PKG_VERSION"),
         "description": "Desired-state infrastructure convergence engine",
@@ -72,7 +72,7 @@ pub fn run(
             {
                 "name": "plan",
                 "description": "Compute a diff and save it as a reviewable plan for apply --plan",
-                "mutating": false,
+                "mutating": true,
                 "args": [
                     {"name": "--targets", "type": "string", "required": false, "default": "all", "description": "Target pattern to match hosts (default: all)"},
                     {"name": "--out", "type": "path", "required": true, "description": "File to write the plan to"}
@@ -101,6 +101,18 @@ pub fn run(
                 "mutating": false,
                 "args": [],
                 "output_fields": []
+            },
+            {
+                "name": "capabilities",
+                "description": "Describe supported resources and safety behavior without loading a project",
+                "mutating": false,
+                "args": [],
+                "output_fields": [
+                    {"name":"resources","type":"array","items":{"type":"string"}},
+                    {"name":"host_key_policies","type":"array","items":{"type":"string"}},
+                    {"name":"plan_drift_protection","type":"boolean"},
+                    {"name":"structured_output","type":"boolean"}
+                ]
             },
             {
                 "name": "init",
@@ -154,7 +166,103 @@ pub fn run(
         },
         "resource_types": build_resource_types(custom_defs, provider_defs),
     });
+    enrich_v0_3(&mut schema);
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+}
+
+fn enrich_v0_3(schema: &mut Value) {
+    schema["output"] = json!({"tty":"text","piped":"json"});
+    let Some(commands) = schema["commands"].as_array_mut() else {
+        return;
+    };
+    for command in commands {
+        let Some(object) = command.as_object_mut() else {
+            continue;
+        };
+        let name = object["name"].as_str().unwrap_or_default().to_string();
+        let mutating = object["mutating"].as_bool().unwrap_or(false);
+        object.insert(
+            "effects".into(),
+            json!(if !mutating {
+                "read_only"
+            } else if name == "apply" {
+                "idempotent"
+            } else {
+                "non_idempotent"
+            }),
+        );
+        if name == "completions" {
+            object.remove("output_fields");
+            object.insert("output_kind".into(), json!("opaque"));
+            object.insert("media_type".into(), json!("text/plain"));
+            continue;
+        }
+        let unbounded = name == "diff";
+        object.insert(
+            "cardinality".into(),
+            json!(if unbounded { "unbounded" } else { "bounded" }),
+        );
+        if unbounded {
+            object.insert(
+                "pagination".into(),
+                json!({"style":"offset","limit_arg":"--limit","offset_arg":"--offset"}),
+            );
+            object.insert("fields_arg".into(), json!("--fields"));
+        }
+        if name == "apply" {
+            object.insert("confirmation_bypass_arg".into(), json!("--yes"));
+        }
+        if name == "capabilities" {
+            object.insert("example".into(), json!({"args":["capabilities"]}));
+        }
+        if name == "schema" {
+            object.remove("output_fields");
+            object.insert("cardinality".into(), json!("single"));
+            object.insert(
+                "stdout_schema".into(),
+                json!({"$ref":"https://clispec.dev/schema/v0.3.json"}),
+            );
+        }
+        if let Some(fields) = object
+            .get_mut("output_fields")
+            .and_then(Value::as_array_mut)
+        {
+            for field in fields {
+                let Some(field) = field.as_object_mut() else {
+                    continue;
+                };
+                if field.get("type").and_then(Value::as_str) == Some("array")
+                    && !field.contains_key("items")
+                {
+                    field.insert("items".into(), json!({"type":"object"}));
+                }
+            }
+        }
+        if !object.contains_key("output_fields") && !object.contains_key("stdout_schema") {
+            object.insert("stdout_schema".into(), json!({}));
+        }
+    }
+    if let Some(exit_codes) = schema
+        .as_object_mut()
+        .and_then(|object| object.remove("exit_codes"))
+    {
+        let outcomes = exit_codes
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|outcome| outcome["code"] != 0)
+            .map(|mut outcome| {
+                if let Some(object) = outcome.as_object_mut()
+                    && let Some(meaning) = object.remove("meaning")
+                {
+                    object.insert("name".into(), meaning);
+                }
+                outcome
+            })
+            .collect();
+        schema["outcomes"] = Value::Array(outcomes);
+    }
 }
 
 fn build_resource_types(
@@ -599,7 +707,7 @@ mod tests {
         // Verify that the schema emitted by run() includes common_properties.sensitive
         // so agents can discover the attribute without reading source.
         let schema = json!({
-            "clispec": "0.2",
+            "clispec": "0.3",
             "name": "verg",
             "version": env!("CARGO_PKG_VERSION"),
             "description": "Desired-state infrastructure convergence engine",
@@ -670,13 +778,13 @@ mod tests {
     #[test]
     fn schema_has_clispec_v0_2_fields() {
         let schema = json!({
-            "clispec": "0.2",
+            "clispec": "0.3",
             "name": "verg",
             "version": env!("CARGO_PKG_VERSION"),
             "commands": [],
         });
         let obj = schema.as_object().unwrap();
-        assert_eq!(obj["clispec"], "0.2");
+        assert_eq!(obj["clispec"], "0.3");
         assert_eq!(obj["name"], "verg");
         assert!(obj.contains_key("version"));
         assert!(obj.contains_key("commands"));

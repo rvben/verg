@@ -1,9 +1,9 @@
 use std::process::Command;
 use tempfile::TempDir;
 
-// Validates the `schema` command output against the vendored CLI Spec v0.2 JSON Schema.
+// Validates the `schema` command output against the vendored CLI Spec v0.3 JSON Schema.
 #[test]
-fn schema_validates_against_clispec_v0_2() {
+fn schema_validates_against_clispec_v0_3() {
     let output = Command::new(env!("CARGO_BIN_EXE_verg"))
         .args(["schema"])
         .output()
@@ -15,14 +15,14 @@ fn schema_validates_against_clispec_v0_2() {
 
     let fixture = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/clispec-v0.2.json"
+        "/tests/fixtures/clispec-v0.3.json"
     ))
-    .expect("clispec v0.2 JSON Schema fixture must be present");
+    .expect("clispec v0.3 JSON Schema fixture must be present");
     let meta_schema: serde_json::Value =
         serde_json::from_str(&fixture).expect("fixture must be valid JSON");
 
     let validator = jsonschema::validator_for(&meta_schema)
-        .expect("clispec v0.2 JSON Schema must be a valid JSON Schema");
+        .expect("clispec v0.3 JSON Schema must be a valid JSON Schema");
 
     let errors: Vec<String> = validator
         .iter_errors(&schema_output)
@@ -31,7 +31,7 @@ fn schema_validates_against_clispec_v0_2() {
 
     assert!(
         errors.is_empty(),
-        "schema output failed clispec v0.2 validation: {errors:?}"
+        "schema output failed clispec v0.3 validation: {errors:?}"
     );
 }
 
@@ -65,7 +65,7 @@ fn schema_outputs_valid_json() {
 }
 
 #[test]
-fn schema_has_clispec_v0_2_fields() {
+fn schema_has_clispec_v0_3_fields() {
     let output = Command::new(env!("CARGO_BIN_EXE_verg"))
         .args(["schema"])
         .output()
@@ -75,7 +75,7 @@ fn schema_has_clispec_v0_2_fields() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
 
-    assert_eq!(parsed["clispec"], "0.2", "clispec version must be 0.2");
+    assert_eq!(parsed["clispec"], "0.3", "clispec version must be 0.3");
     assert_eq!(parsed["name"], "verg", "name must be verg");
     assert!(
         parsed["version"].is_string(),
@@ -91,20 +91,18 @@ fn schema_has_clispec_v0_2_fields() {
     );
     assert!(parsed["errors"].is_array(), "errors field must be an array");
 
-    // The exit_codes array documents the complete process exit-code contract,
-    // including the success/nothing-changed/total-failure outcomes the errors
-    // array cannot express. Every code the binary can return must be listed.
-    let exit_codes = parsed["exit_codes"]
+    // The outcomes array documents non-error non-zero process outcomes.
+    let exit_codes = parsed["outcomes"]
         .as_array()
-        .expect("exit_codes field must be an array");
+        .expect("outcomes field must be an array");
     let codes: Vec<i64> = exit_codes
         .iter()
         .filter_map(|e| e["code"].as_i64())
         .collect();
-    for expected in [0, 1, 2, 3, 4, 5, 6, 7, 8, 130] {
+    for expected in [1, 2, 3, 4, 5, 6, 7, 8, 130] {
         assert!(
             codes.contains(&expected),
-            "exit_codes must document code {expected}, got: {codes:?}"
+            "outcomes must document code {expected}, got: {codes:?}"
         );
     }
 
