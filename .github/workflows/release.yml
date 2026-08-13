@@ -320,7 +320,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           path: |
-            verg-*-${{ matrix.target }}.tar.gz*
+            verg-${{ github.ref_name }}-${{ matrix.target }}.tar.gz*
             verg-agent-${{ matrix.target }}
             verg-agent-${{ matrix.target }}.sha256
           name: release-${{ matrix.target }}
@@ -409,8 +409,8 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/release-*/verg-*.tar.gz
-            artifacts/release-*/verg-*.tar.gz.sha256
+            artifacts/release-*/verg-${{ github.ref_name }}-*.tar.gz
+            artifacts/release-*/verg-${{ github.ref_name }}-*.tar.gz.sha256
             artifacts/release-*/verg-agent-*
 
       - name: Remove stuck draft on failure
