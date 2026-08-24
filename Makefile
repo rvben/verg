@@ -1,4 +1,4 @@
-.PHONY: build release test lint fmt check clean install e2e agent-linux agent-cache
+.PHONY: build release test lint fmt check clean install e2e agent-linux agent-cache release-patch release-minor release-major
 
 build:
 	cargo build
@@ -45,3 +45,12 @@ agent-cache: agent-linux
 	cp target/x86_64-unknown-linux-musl/release/verg-agent \
 		"$(HOME)/Library/Application Support/verg/agents/$(VERSION)/verg-agent-x86_64-unknown-linux-gnu"
 	@echo "Cached at ~/Library/Application Support/verg/agents/$(VERSION)/verg-agent-x86_64-unknown-linux-gnu"
+
+release-patch:
+	vership bump patch
+
+release-minor:
+	vership bump minor
+
+release-major:
+	vership bump major

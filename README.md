@@ -285,3 +285,8 @@ See [SECURITY.md](SECURITY.md) for the full threat model, supply chain details, 
 ## License
 
 MIT
+
+## Releasing
+
+Vership owns versioning, changelog generation, release commits, and tags. See
+[the release runbook](docs/releases.md) for the verified workflow and recovery policy.
